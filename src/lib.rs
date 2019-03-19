@@ -1,6 +1,3 @@
-#![feature(crate_visibility_modifier)]
-#![feature(manually_drop_take)]
-
 use std::mem;
 use std::sync::atomic::Ordering;
 
@@ -8,6 +5,7 @@ use reclaim::{MarkedNonNull, MarkedPtr, NotEqual, Protected, Reclaim, Unsigned};
 
 pub type Atomic<T, N> = reclaim::Atomic<T, N, HP>;
 pub type Shared<'g, T, N> = reclaim::Shared<'g, T, N, HP>;
+pub type Owned<T, N> = reclaim::Owned<T, N, HP>;
 pub type Unlinked<T, N> = reclaim::Unlinked<T, N, HP>;
 
 mod global;
@@ -15,7 +13,7 @@ mod hazard;
 mod local;
 mod retired;
 
-use crate::hazard::{Hazard, HazardPair};
+use crate::hazard::{Hazard, HazardPtr};
 use crate::retired::Retired;
 use std::ptr::NonNull;
 
@@ -43,6 +41,7 @@ unsafe impl Reclaim for HP {
     }
 }
 
+#[inline]
 pub fn guarded<T, N: Unsigned>() -> impl Protected<Item = T, MarkBits = N, Reclaimer = HP> {
     Guarded::new()
 }
@@ -52,16 +51,17 @@ pub fn guarded<T, N: Unsigned>() -> impl Protected<Item = T, MarkBits = N, Recla
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub struct Guarded<T, N: Unsigned> {
-    hazard: Option<(&'static HazardPair, MarkedNonNull<T, N>)>,
+    hazard: Option<(&'static Hazard, MarkedNonNull<T, N>)>,
 }
 
 impl<T, N: Unsigned> Guarded<T, N> {
     #[inline]
-    fn take_hazard_and_protect(&mut self, protect: NonNull<()>) -> Option<Hazard> {
+    fn take_hazard_and_protect(&mut self, protect: NonNull<()>) -> Option<HazardPtr> {
         self.hazard.take().map(|(hazard, _)| {
-            // (1) this `Release` store synchronizes with any load on the same hazard pointer
+            // (LIB:1) this `Release` store synchronizes with any `Acquire` load on the `protected`
+            // field of the same hazard pointer such as (GLO:1)
             hazard.set_protected(protect, Ordering::Release);
-            Hazard::from(hazard)
+            HazardPtr::from(hazard)
         })
     }
 }
@@ -96,10 +96,8 @@ impl<T, N: Unsigned> Protected for Guarded<T, N> {
                     .unwrap_or(acquire_hazard_for(protect.cast()));
 
                 // the initially taken snapshot is now stored in the hazard pointer, but the value
-                // stored in `atomic` may have changed
-                // (2) this load synchronizes with any potential store to `atomic` and needs to have
-                // at least `Acquire` ordering to ensure that none of the following reads or writes
-                // are reordered before it
+                // stored in `atomic` may have changed already
+                // (2) this load has to synchronize with any potential store to `atomic`
                 while let Some(ptr) = MarkedNonNull::new(atomic.load_raw(order)) {
                     let unmarked = ptr.decompose_non_null();
                     if protect == unmarked {
@@ -110,8 +108,10 @@ impl<T, N: Unsigned> Protected for Guarded<T, N> {
                         return Some(unsafe { Shared::from_marked_non_null(ptr) });
                     }
 
+                    // (3) this `Release` store synchronizes with any `Acquire` load on the
+                    // `protected` field of the same hazard pointer such as (GLO:1).
                     handle
-                        .hazard_pair()
+                        .hazard()
                         .set_protected(unmarked.cast(), Ordering::Release);
                     protect = unmarked;
                 }
@@ -136,7 +136,7 @@ impl<T, N: Unsigned> Protected for Guarded<T, N> {
                     .take_hazard_and_protect(unmarked.cast())
                     .unwrap_or(acquire_hazard_for(unmarked.cast()));
 
-                // (3) this load operation ...
+                // (4) this load operation ...
                 if atomic.load_raw(order) != ptr {
                     return Err(NotEqual);
                 }
@@ -147,7 +147,7 @@ impl<T, N: Unsigned> Protected for Guarded<T, N> {
                 // the current value of `atomic`
                 return Ok(Some(unsafe { Shared::from_marked_non_null(ptr) }));
             }
-            // value `atomic` and `compare` are both null
+            // values of `atomic` and `compare` are both null
             None if compare.is_null() => {
                 self.release();
                 return Ok(None);
@@ -160,7 +160,7 @@ impl<T, N: Unsigned> Protected for Guarded<T, N> {
     fn release(&mut self) {
         if let Some((hazard, _)) = self.hazard {
             self.hazard = None;
-            mem::drop(Hazard::from(hazard))
+            mem::drop(HazardPtr::from(hazard))
         }
     }
 }
@@ -180,13 +180,14 @@ impl<T, N: Unsigned> Drop for Guarded<T, N> {
 }
 
 #[inline]
-fn acquire_hazard_for(ptr: NonNull<()>) -> Hazard {
+fn acquire_hazard_for(protect: NonNull<()>) -> HazardPtr {
     if let Some(handle) = local::acquire_hazard() {
-        // (4) this `Release` store synchronizes with any load on the same hazard pointer
-        handle.hazard_pair().set_protected(ptr, Ordering::Release);
+        // (5) this `Release` store synchronizes with any load on the `protected` field of the same
+        // hazard pointer
+        handle.hazard().set_protected(protect, Ordering::Release);
 
         return handle;
     }
 
-    global::acquire_hazard_for(ptr)
+    global::acquire_hazard_for(protect)
 }

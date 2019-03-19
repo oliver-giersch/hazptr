@@ -1,14 +1,15 @@
 use std::iter::FusedIterator;
 use std::mem;
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-use crate::hazard::{HazardPair, FREE};
-use std::ptr::NonNull;
+use reclaim::align::CachePadded;
+
+use crate::hazard::{Hazard, FREE};
 
 #[derive(Debug, Default)]
 pub struct HazardList {
-    head: AtomicPtr<HazardPair>,
+    head: AtomicPtr<HazardNode>,
 }
 
 impl HazardList {
@@ -20,7 +21,7 @@ impl HazardList {
     }
 
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = &HazardPair> {
+    pub fn iter(&self) -> impl Iterator<Item = &Hazard> {
         unsafe {
             Iter {
                 // (x) this `Acquire` load synchronizes with ...
@@ -30,45 +31,45 @@ impl HazardList {
         }
     }
 
-    pub fn acquire_hazard(&self, ptr: NonNull<()>) -> &HazardPair {
+    pub fn acquire_hazard_for(&self, protect: NonNull<()>) -> &Hazard {
         let mut prev = &self.head;
         let mut curr = self.head.load(Ordering::Acquire);
 
-        while let Some(hazard) = unsafe { curr.as_ref() } {
-            if hazard.protected.load(Ordering::Relaxed) == FREE {
-                if hazard
-                    .protected
-                    .compare_and_swap(FREE, ptr.as_ptr(), Ordering::Release)
-                    == FREE
-                {
-                    return hazard;
+        while let Some(node) = unsafe { curr.as_ref() } {
+            if node.hazard.protected.load(Ordering::Relaxed) == FREE {
+                let prev = node.hazard.protected.compare_and_swap(
+                    FREE,
+                    protect.as_ptr(),
+                    Ordering::Release,
+                );
+
+                if prev == FREE {
+                    return &*node.hazard;
                 }
             }
 
-            prev = &hazard.next;
-            curr = hazard.next.load(Ordering::Acquire);
+            prev = &node.next;
+            curr = node.next.load(Ordering::Acquire);
         }
 
-        self.insert_back(prev, ptr)
+        self.insert_back(prev, protect)
     }
 
-    fn insert_back(&self, mut tail: &AtomicPtr<HazardPair>, ptr: NonNull<()>) -> &HazardPair {
-        let hazard = Box::leak(Box::new(HazardPair::new(ptr)));
+    fn insert_back(&self, mut tail: &AtomicPtr<HazardNode>, protect: NonNull<()>) -> &Hazard {
+        let node = Box::leak(Box::new(HazardNode {
+            hazard: CachePadded::new(Hazard::new(protect)),
+            next: CachePadded::new(AtomicPtr::default()),
+        }));
 
         loop {
             // this `Release` CAS ensures the previous allocation (write) is published and
             // synchronizes with all `Acquire` loads on the same `next` field
             let res = tail
-                .compare_exchange_weak(
-                    ptr::null_mut(),
-                    hazard,
-                    Ordering::Release,
-                    Ordering::Relaxed,
-                )
+                .compare_exchange_weak(ptr::null_mut(), node, Ordering::Release, Ordering::Relaxed)
                 .map_err(|ptr| unsafe { ptr.as_ref() });
 
             if let Ok(_) = res {
-                return hazard;
+                return &*node.hazard;
             } else if let Err(Some(curr)) = res {
                 tail = &curr.next;
             }
@@ -89,39 +90,48 @@ impl Drop for HazardList {
 }
 
 pub struct Iter<'a> {
-    current: Option<&'a HazardPair>,
+    current: Option<&'a HazardNode>,
 }
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = &'a HazardPair;
+    type Item = &'a Hazard;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.current.take();
-        if let Some(hazard) = next {
+        if let Some(node) = next {
             // (x) this `Acquire` load synchronizes with
-            self.current = unsafe { hazard.next.load(Ordering::Acquire).as_ref() };
+            self.current = unsafe { node.next.load(Ordering::Acquire).as_ref() };
         }
 
-        next
+        next.map(|node| &*node.hazard)
     }
 }
 
 impl<'a> FusedIterator for Iter<'a> {}
 
+struct HazardNode {
+    hazard: CachePadded<Hazard>,
+    next: CachePadded<AtomicPtr<HazardNode>>,
+}
+
 #[cfg(test)]
 mod test {
-    use std::ptr::{self, NonNull};
+    use std::ptr::NonNull;
     use std::sync::atomic::Ordering;
 
     use super::HazardList;
 
     #[test]
     fn insert_one() {
+        let ptr = NonNull::new(0xDEADBEEF as *mut ()).unwrap();
+
         let list = HazardList::new();
-        let hazard = list.acquire_hazard(NonNull::new(0xDEADBEEF as *mut ()).unwrap());
-        assert_eq!(hazard.protected.load(Ordering::Relaxed), 1 as *mut ());
-        assert_eq!(hazard.next.load(Ordering::Relaxed), ptr::null_mut());
+        let hazard = list.acquire_hazard_for(ptr);
+        assert_eq!(
+            hazard.protected.load(Ordering::Relaxed),
+            0xDEADBEEF as *mut ()
+        );
     }
 
     #[test]
@@ -129,9 +139,9 @@ mod test {
         let ptr = NonNull::new(0xDEADBEEF as *mut ()).unwrap();
 
         let list = HazardList::new();
-        let _ = list.acquire_hazard(ptr);
-        let _ = list.acquire_hazard(ptr);
-        let _ = list.acquire_hazard(ptr);
+        let _ = list.acquire_hazard_for(ptr);
+        let _ = list.acquire_hazard_for(ptr);
+        let _ = list.acquire_hazard_for(ptr);
 
         assert!(list
             .iter()

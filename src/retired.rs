@@ -6,6 +6,10 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 /// RetiredBag
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A list for caching reclaimed records before they can be finally dropped/deallocated.
+///
+/// The struct also functions as potential list node for the global list of abandoned bags.
+/// When a thread exits
 pub struct RetiredBag {
     pub inner: Vec<Retired>,
     next: Option<NonNull<RetiredBag>>,
@@ -122,6 +126,7 @@ impl Retired {
 
     #[inline]
     pub fn address(&self) -> usize {
+        // casts to thin pointer first
         self.record.as_ptr() as *mut () as usize
     }
 }
@@ -129,7 +134,6 @@ impl Retired {
 impl Drop for Retired {
     #[inline]
     fn drop(&mut self) {
-        // FIXME: only correct for `Global` allocator
         mem::drop(unsafe { Box::from_raw(self.record.as_ptr()) });
     }
 }
