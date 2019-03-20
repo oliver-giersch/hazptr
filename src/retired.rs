@@ -63,7 +63,7 @@ impl AbandonedBags {
             // this is safe because all nodes are backed by valid leaked allocations (Box)
             leaked.next = unsafe { head.as_mut().map(NonNull::from) };
 
-            // (1) this `Release` compare_exchange synchronizes with the `Acquire` swap in (2)
+            // (RET:1) this `Release` compare_exchange synchronizes with the `Acquire` swap in (2)
             if self
                 .head
                 .compare_exchange_weak(head, leaked, Ordering::Release, Ordering::Relaxed)
@@ -82,7 +82,7 @@ impl AbandonedBags {
         }
 
         // this is safe because all nodes are backed by valid leaked allocations (Box)
-        // (2) this `Acquire` swap synchronizes with the `Release` compare_exchange in (1)
+        // (RET:2) this `Acquire` swap synchronizes with the `Release` compare_exchange in (1)
         let stack = unsafe { self.head.swap(ptr::null_mut(), Ordering::Acquire).as_mut() };
         stack.map(|bag| {
             // this is safe because all nodes are backed by valid leaked allocations (Box)

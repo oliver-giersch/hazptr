@@ -9,9 +9,7 @@ use crate::global;
 use crate::hazard::{Hazard, HazardPtr, Protected};
 use crate::retired::{Retired, RetiredBag};
 
-thread_local! {
-    static LOCAL: UnsafeCell<Local> = UnsafeCell::new(Local::new());
-}
+thread_local!(static LOCAL: UnsafeCell<Local> = UnsafeCell::new(Local::new()));
 
 /// Attempts to take a reserved hazard from the thread local cache if there are any.
 #[inline]
@@ -24,6 +22,7 @@ pub fn acquire_hazard() -> Option<HazardPtr> {
     })
 }
 
+/// Tries to cache the given hazard in the thread local storage.
 #[inline]
 pub fn try_recycle_hazard(hazard: &'static Hazard) -> Result<(), &'static Hazard> {
     LOCAL.with(move |cell| {
@@ -40,6 +39,7 @@ pub fn try_recycle_hazard(hazard: &'static Hazard) -> Result<(), &'static Hazard
     })
 }
 
+/// Retires the given record and drops/deallocates it once it is safe to do so.
 #[inline]
 pub fn retire_record(record: Retired) {
     LOCAL.with(move |cell| unsafe { &mut *cell.get() }.retire_record(record));

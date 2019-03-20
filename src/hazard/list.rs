@@ -7,12 +7,14 @@ use reclaim::align::CachePadded;
 
 use crate::hazard::{Hazard, FREE};
 
+/// Linked list for hazard pointers
 #[derive(Debug, Default)]
 pub struct HazardList {
     head: AtomicPtr<HazardNode>,
 }
 
 impl HazardList {
+    /// Creates a new empty list.
     #[inline]
     pub fn new() -> Self {
         Self {
@@ -22,15 +24,14 @@ impl HazardList {
 
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = &Hazard> {
-        unsafe {
-            Iter {
-                // (x) this `Acquire` load synchronizes with ...
-                current: self.head.load(Ordering::Acquire).as_ref(),
-            }
-            .fuse()
+        Iter {
+            // (LIS:1) this `Acquire` load synchronizes with ...
+            current: unsafe { self.head.load(Ordering::Acquire).as_ref() },
         }
+        .fuse()
     }
 
+    #[inline]
     pub fn acquire_hazard_for(&self, protect: NonNull<()>) -> &Hazard {
         let mut prev = &self.head;
         let mut curr = self.head.load(Ordering::Acquire);
@@ -55,6 +56,7 @@ impl HazardList {
         self.insert_back(prev, protect)
     }
 
+    #[inline]
     fn insert_back(&self, mut tail: &AtomicPtr<HazardNode>, protect: NonNull<()>) -> &Hazard {
         let node = Box::leak(Box::new(HazardNode {
             hazard: CachePadded::new(Hazard::new(protect)),
@@ -62,16 +64,16 @@ impl HazardList {
         }));
 
         loop {
-            // this `Release` CAS ensures the previous allocation (write) is published and
+            // (LIS:2) this `Release` CAS ensures the previous allocation (write) is published and
             // synchronizes with all `Acquire` loads on the same `next` field
             let res = tail
                 .compare_exchange_weak(ptr::null_mut(), node, Ordering::Release, Ordering::Relaxed)
                 .map_err(|ptr| unsafe { ptr.as_ref() });
 
-            if let Ok(_) = res {
-                return &*node.hazard;
-            } else if let Err(Some(curr)) = res {
+            if let Err(Some(curr)) = res {
                 tail = &curr.next;
+            } else if res.is_ok() {
+                return &*node.hazard;
             }
         }
     }
@@ -89,6 +91,10 @@ impl Drop for HazardList {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Iter
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub struct Iter<'a> {
     current: Option<&'a HazardNode>,
 }
@@ -100,7 +106,7 @@ impl<'a> Iterator for Iter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.current.take();
         if let Some(node) = next {
-            // (x) this `Acquire` load synchronizes with
+            // (LIS:3) this `Acquire` load synchronizes with
             self.current = unsafe { node.next.load(Ordering::Acquire).as_ref() };
         }
 
@@ -109,6 +115,10 @@ impl<'a> Iterator for Iter<'a> {
 }
 
 impl<'a> FusedIterator for Iter<'a> {}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/// HazardNode
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct HazardNode {
     hazard: CachePadded<Hazard>,
