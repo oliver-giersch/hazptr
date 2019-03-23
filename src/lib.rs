@@ -162,6 +162,10 @@ impl<T, N: Unsigned> Protected for Guarded<T, N> {
 
     #[inline]
     fn release(&mut self) {
+        if cfg!(feature = "count-release") && self.hazard.is_some() {
+            local::increase_ops_count();
+        }
+
         // if `hazard` is Some(_) the contained `HazardPtr` is dropped
         self.hazard = None;
     }
@@ -181,6 +185,8 @@ impl<T, N: Unsigned> Drop for Guarded<T, N> {
     }
 }
 
+/// Attempts to take a reserved hazard from the thread-local cache or infallibly acquires one from
+/// the global list.
 #[inline]
 fn acquire_hazard_for(protect: NonNull<()>) -> HazardPtr {
     if let Some(handle) = local::acquire_hazard() {

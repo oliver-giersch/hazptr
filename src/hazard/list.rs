@@ -186,19 +186,19 @@ mod tests {
 
     #[test]
     fn insert_one() {
-        let ptr = NonNull::new(0xDEADBEEF as *mut ()).unwrap();
+        let ptr = NonNull::new(0xDEAD_BEEF as *mut ()).unwrap();
 
         let list = HazardList::new();
         let hazard = list.acquire_hazard_for(ptr);
         assert_eq!(
             hazard.protected.load(Ordering::Relaxed),
-            0xDEADBEEF as *mut ()
+            0xDEAD_BEEF as *mut ()
         );
     }
 
     #[test]
     fn iter() {
-        let ptr = NonNull::new(0xDEADBEEF as *mut ()).unwrap();
+        let ptr = NonNull::new(0xDEAD_BEEF as *mut ()).unwrap();
 
         let list = HazardList::new();
         let _ = list.acquire_hazard_for(ptr);

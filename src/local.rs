@@ -1,3 +1,5 @@
+//! Thread local state and caches for reserving hazard pointers or storing reclaimed records.
+
 use std::cell::UnsafeCell;
 use std::mem::ManuallyDrop;
 use std::ptr;
@@ -45,6 +47,12 @@ pub fn retire_record(record: Retired) {
     LOCAL.with(move |cell| unsafe { &mut *cell.get() }.retire_record(record));
 }
 
+/// Increases the thread local operations count and triggers a scan if the threshold is reached.
+#[inline]
+pub fn increase_ops_count() {
+    LOCAL.with(|cell| unsafe { &mut *cell.get() }.increase_ops_count());
+}
+
 /// Marker type for returning `Err` results.
 pub struct CapacityErr;
 
@@ -65,7 +73,7 @@ struct Local {
 }
 
 impl Local {
-    /// Creates a new `Local`.
+    /// Creates a new container for thread local state.
     #[inline]
     fn new() -> Self {
         Self {
@@ -79,9 +87,20 @@ impl Local {
         }
     }
 
+    /// Retires a record and increases the operations count.
+    ///
+    /// If the operations count reaches a threshold, a scan is triggered which reclaims all records
+    /// than can be safely reclaimed and resets the operations count. Beforehand, the thread
+    /// attempts to adopt all globally abandoned records.
     #[inline]
     fn retire_record(&mut self, record: Retired) {
         self.retired_bag.inner.push(record);
+        #[cfg(not(feature = "count-release"))]
+        self.increase_ops_count();
+    }
+
+    #[inline]
+    fn increase_ops_count(&mut self) {
         self.ops_count += 1;
 
         if self.ops_count == SCAN_THRESHOLD {
@@ -95,6 +114,7 @@ impl Local {
         }
     }
 
+    /// Scans all hazard pointers and reclaims locally retired records that are unprotected.
     #[inline]
     fn scan_hazards(&mut self) {
         global::collect_protected_hazards(&mut self.scan_cache);
@@ -117,12 +137,11 @@ impl Drop for Local {
             hazard.set_free(Ordering::Relaxed);
         }
 
-        // (LOC:2) this `Release` fence ensures the store operations in the previous loop are
-        // published and synchronizes with all `Acquire` loads on the same hazard pointers such as..
+        // (LOC:2) this `Release` fence synchronizes-with ...
         atomic::fence(Ordering::Release);
 
         self.scan_hazards();
-        // this is safe because `retired_bag` is neither accessed anymore nor dropped after this
+        // this is safe because the `retired_bag` field is neither accessed afterwards nor dropped
         let bag = unsafe { ptr::read(&*self.retired_bag) };
 
         if !bag.inner.is_empty() {
