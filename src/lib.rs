@@ -98,7 +98,7 @@ impl<T, N: Unsigned> Protected for Guarded<T, N> {
             }
             Some(ptr) => {
                 let mut protect = ptr.decompose_non_null();
-                let handle = self
+                let hazard = self
                     .take_hazard_and_protect(protect.cast())
                     .unwrap_or_else(|| acquire_hazard_for(protect.cast()));
 
@@ -108,14 +108,14 @@ impl<T, N: Unsigned> Protected for Guarded<T, N> {
                 while let Some(ptr) = MarkedNonNull::new(atomic.load_raw(order)) {
                     let unmarked = ptr.decompose_non_null();
                     if protect == unmarked {
-                        self.hazard = Some((handle, ptr));
+                        self.hazard = Some((hazard, ptr));
 
                         // this is safe because `ptr` is now stored in a hazard pointer and matches
                         // the current value of `atomic`
                         return Some(unsafe { Shared::from_marked_non_null(ptr) });
                     }
 
-                    handle.set_protected(unmarked.cast());
+                    hazard.set_protected(unmarked.cast());
                     protect = unmarked;
                 }
 
@@ -135,7 +135,7 @@ impl<T, N: Unsigned> Protected for Guarded<T, N> {
             // values of `atomic` and `compare` are non-null and equal
             Some(ptr) if ptr == compare => {
                 let unmarked = ptr.decompose_non_null();
-                let handle = self
+                let hazard = self
                     .take_hazard_and_protect(unmarked.cast())
                     .unwrap_or_else(|| acquire_hazard_for(unmarked.cast()));
 
@@ -145,7 +145,7 @@ impl<T, N: Unsigned> Protected for Guarded<T, N> {
                     return Err(NotEqual);
                 }
 
-                self.hazard = Some((handle, ptr));
+                self.hazard = Some((hazard, ptr));
 
                 // this is safe because `ptr` is now stored in a hazard pointer and matches
                 // the current value of `atomic`

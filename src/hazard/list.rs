@@ -178,7 +178,7 @@ struct HazardNode {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use std::ptr::NonNull;
     use std::sync::atomic::Ordering;
 
@@ -207,7 +207,6 @@ mod test {
 
         assert!(list
             .iter()
-            .fuse()
             .all(|hazard| hazard.protected.load(Ordering::Relaxed) == ptr.as_ptr()));
     }
 }
