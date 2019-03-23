@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 /// A list for caching reclaimed records before they can be finally dropped/deallocated.
 ///
-/// The struct also functions as potential list node for the global list of abandoned bags.
-/// When a thread exits
+/// This type also functions as potential list node for the global list of abandoned bags.
+/// The internal cache uses a `Vec`, which will have to be reallocated if too many retired records
+/// are cached at any time.
 pub struct RetiredBag {
     pub inner: Vec<Retired>,
     next: Option<NonNull<RetiredBag>>,
@@ -18,6 +19,7 @@ pub struct RetiredBag {
 impl RetiredBag {
     const DEFAULT_CAPACITY: usize = 256;
 
+    /// Creates a new `RetiredBag` with default capacity for retired records.
     #[inline]
     pub fn new() -> Self {
         Self {
@@ -29,7 +31,7 @@ impl RetiredBag {
     #[inline]
     pub fn merge(&mut self, mut other: Vec<Retired>) {
         // swap bags if the other one is substantially larger and thus able to fit more records
-        // before reallocating
+        // before reallocating, potentially avoiding/deferring such reallocations
         if (other.capacity() - other.len()) > self.inner.capacity() {
             mem::swap(&mut self.inner, &mut other);
         }
@@ -63,7 +65,7 @@ impl AbandonedBags {
             // this is safe because all nodes are backed by valid leaked allocations (Box)
             leaked.next = unsafe { head.as_mut().map(NonNull::from) };
 
-            // (RET:1) this `Release` compare_exchange synchronizes with the `Acquire` swap in (2)
+            // (RET:1) this `Release` CAS synchronizes-with the `Acquire` swap in (RET:2)
             if self
                 .head
                 .compare_exchange_weak(head, leaked, Ordering::Release, Ordering::Relaxed)
@@ -74,15 +76,15 @@ impl AbandonedBags {
         }
     }
 
+    #[inline]
     pub fn take_and_merge(&self) -> Option<Box<RetiredBag>> {
-        // this avoids the atomic exchange if the stack is empty, the `Relaxed` load can not be
-        // reordered after the following `Acquire` swap.
+        // this avoids the CAS if the stack is empty
         if self.head.load(Ordering::Relaxed).is_null() {
             return None;
         }
 
         // this is safe because all nodes are backed by valid leaked allocations (Box)
-        // (RET:2) this `Acquire` swap synchronizes with the `Release` compare_exchange in (1)
+        // (RET:2) this `Acquire` swap synchronizes-with the `Release` CAS in (RET:1)
         let stack = unsafe { self.head.swap(ptr::null_mut(), Ordering::Acquire).as_mut() };
         stack.map(|bag| {
             // this is safe because all nodes are backed by valid leaked allocations (Box)
@@ -105,13 +107,17 @@ impl AbandonedBags {
 /// Retired
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A (fat) pointer to a retired record that has not yet been reclaimed and deallocated.
 pub struct Retired {
     record: NonNull<dyn Any + 'static>,
 }
 
 impl Retired {
+    /// Creates a new `Retired` record from a raw (unmarked) pointer of arbitrary type.
+    ///
     /// # Safety
     ///
+    /// The caller has to ensure the given `record` points to
     /// The record will be dropped at an unspecified time, which means it may potentially outlive
     /// its any (non-static) lifetime. Since the record will be only dropped after retirement, this
     /// is safe as long as the `Drop` implementation does not access any non-static references.
@@ -124,6 +130,7 @@ impl Retired {
         Self { record: any }
     }
 
+    /// Gets the memory address of the retired record.
     #[inline]
     pub fn address(&self) -> usize {
         // casts to thin pointer first
@@ -134,6 +141,8 @@ impl Retired {
 impl Drop for Retired {
     #[inline]
     fn drop(&mut self) {
+        // this is safe since the HP reclamation scheme does not require any additional information
+        // per allocated record
         mem::drop(unsafe { Box::from_raw(self.record.as_ptr()) });
     }
 }

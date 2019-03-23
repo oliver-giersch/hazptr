@@ -14,7 +14,6 @@
 //! Whenever a thread reads a pointer to a data structure from shared memory it has to acquire a
 //! hazard pointer for it before this pointer can be safely dereferenced. These pointers are a
 
-use std::mem;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
@@ -26,6 +25,39 @@ pub use self::list::{HazardList, Iter};
 
 const FREE: *mut () = 0 as *mut ();
 const RESERVED: *mut () = 1 as *mut ();
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/// HazardPtr
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// An RAII wrapper for a global reference to a hazard pair.
+pub struct HazardPtr(&'static Hazard);
+
+impl HazardPtr {
+    /// Marks the hazard as actively protecting the given pointer.
+    #[inline]
+    pub fn set_protected(&self, protect: NonNull<()>) {
+        self.0.set_protected(protect);
+    }
+}
+
+impl From<&'static Hazard> for HazardPtr {
+    #[inline]
+    fn from(pair: &'static Hazard) -> Self {
+        Self(pair)
+    }
+}
+
+impl Drop for HazardPtr {
+    #[inline]
+    fn drop(&mut self) {
+        // try to store the hazard in the thread local cache or mark is as globally available
+        if local::try_recycle_hazard(self.0).is_err() {
+            // (HAZ:1) this `Release` store synchronizes-with ...
+            self.0.set_free(Ordering::Release);
+        }
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Hazard
@@ -49,15 +81,17 @@ impl Hazard {
         self.protected.store(RESERVED, order);
     }
 
-    /// Marks the hazard as actively protecting the given pointer (`protect`).
+    /// Marks the hazard as actively protecting the given pointer.
     #[inline]
-    pub fn set_protected(&self, protect: NonNull<()>, order: Ordering) {
-        self.protected.store(protect.as_ptr(), order);
+    fn set_protected(&self, protect: NonNull<()>) {
+        // (HAZ:2) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1) and establishes
+        // a total order of all stores
+        self.protected.store(protect.as_ptr(), Ordering::SeqCst);
     }
 
     /// Gets the protected pointer if there is one.
     #[inline]
-    pub fn protected(&self, order: Ordering) -> Option<Protected> {
+    fn protected(&self, order: Ordering) -> Option<Protected> {
         match self.protected.load(order) {
             FREE | RESERVED => None,
             ptr => Some(Protected(unsafe { NonNull::new_unchecked(ptr) })),
@@ -69,43 +103,6 @@ impl Hazard {
     fn new(protect: NonNull<()>) -> Self {
         Self {
             protected: AtomicPtr::new(protect.as_ptr()),
-        }
-    }
-}
-
-/// An RAII wrapper for a global reference to a hazard pair.
-pub struct HazardPtr(&'static Hazard);
-
-impl HazardPtr {
-    /// Gets a (lifetime restricted) reference to the hazard.
-    #[inline]
-    pub fn hazard(&self) -> &Hazard {
-        &self.0
-    }
-
-    /// Consumes self and returns the raw static `Hazard` reference.
-    #[inline]
-    pub fn into_inner(self) -> &'static Hazard {
-        let hazard = self.0;
-        mem::forget(self);
-        hazard
-    }
-}
-
-impl From<&'static Hazard> for HazardPtr {
-    #[inline]
-    fn from(pair: &'static Hazard) -> Self {
-        Self(pair)
-    }
-}
-
-impl Drop for HazardPtr {
-    #[inline]
-    fn drop(&mut self) {
-        // try returning the hazard pair to the thread local cache or mark it (globally) as
-        // available for all threads if the cache is at maximum capacity
-        if let Err(hazard) = local::try_recycle_hazard(self.0) {
-            hazard.set_free(Ordering::Release);
         }
     }
 }

@@ -24,7 +24,7 @@ pub fn acquire_hazard() -> Option<HazardPtr> {
 
 /// Tries to cache the given hazard in the thread local storage.
 #[inline]
-pub fn try_recycle_hazard(hazard: &'static Hazard) -> Result<(), &'static Hazard> {
+pub fn try_recycle_hazard(hazard: &'static Hazard) -> Result<(), LocalCacheFull> {
     LOCAL.with(move |cell| {
         let local = unsafe { &mut *cell.get() };
         match local.hazard_cache.try_push(hazard) {
@@ -34,7 +34,7 @@ pub fn try_recycle_hazard(hazard: &'static Hazard) -> Result<(), &'static Hazard
                 hazard.set_reserved(Ordering::Release);
                 Ok(())
             }
-            Err(_) => Err(hazard),
+            Err(_) => Err(LocalCacheFull),
         }
     })
 }
@@ -45,6 +45,9 @@ pub fn retire_record(record: Retired) {
     LOCAL.with(move |cell| unsafe { &mut *cell.get() }.retire_record(record));
 }
 
+/// Marker type for returning `Err` results.
+pub struct LocalCacheFull;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Local
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -53,6 +56,7 @@ const SCAN_THRESHOLD: u32 = 100;
 const HAZARD_CACHE: usize = 16;
 const SCAN_CACHE: usize = 128;
 
+/// Container for all thread local data required for reclamation with hazard pointers.
 struct Local {
     ops_count: u32,
     hazard_cache: ArrayVec<[&'static Hazard; HAZARD_CACHE]>,
@@ -113,7 +117,7 @@ impl Drop for Local {
         atomic::fence(Ordering::Release);
 
         self.scan_hazards();
-        // this is safe because `retired_bag` is not accessed anymore after this
+        // this is safe because `retired_bag` is neither accessed anymore nor dropped after this
         let bag = unsafe { ptr::read(&*self.retired_bag) };
 
         if !bag.inner.is_empty() {
