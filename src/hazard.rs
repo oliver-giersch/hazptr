@@ -81,21 +81,21 @@ impl Hazard {
         self.protected.store(RESERVED, order);
     }
 
+    /// Gets the protected pointer if there is one.
+    #[inline]
+    pub fn protected(&self, order: Ordering) -> Option<Protected> {
+        match self.protected.load(order) {
+            FREE | RESERVED => None,
+            ptr => Some(Protected(unsafe { NonNull::new_unchecked(ptr) })),
+        }
+    }
+
     /// Marks the hazard as actively protecting the given pointer.
     #[inline]
     fn set_protected(&self, protect: NonNull<()>) {
         // (HAZ:2) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1) and establishes
         // a total order of all stores
         self.protected.store(protect.as_ptr(), Ordering::SeqCst);
-    }
-
-    /// Gets the protected pointer if there is one.
-    #[inline]
-    fn protected(&self, order: Ordering) -> Option<Protected> {
-        match self.protected.load(order) {
-            FREE | RESERVED => None,
-            ptr => Some(Protected(unsafe { NonNull::new_unchecked(ptr) })),
-        }
     }
 
     /// Creates new hazard for insertion in the global hazards list protecting the given pointer.

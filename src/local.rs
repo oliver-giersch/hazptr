@@ -98,10 +98,14 @@ impl Local {
     fn scan_hazards(&mut self) {
         global::collect_protected_hazards(&mut self.scan_cache);
 
-        let mut iter = self.scan_cache.iter();
-        self.retired_bag
-            .inner
-            .retain(move |retired| iter.any(|hazard| hazard.address() == retired.address()));
+        let scan_cache = &mut self.scan_cache;
+        scan_cache.sort_unstable();
+
+        self.retired_bag.inner.retain(move |retired| {
+            scan_cache
+                .binary_search_by(|protected| protected.address().cmp(&retired.address()))
+                .is_ok()
+        })
     }
 }
 
