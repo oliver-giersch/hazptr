@@ -1,15 +1,11 @@
 use std::ptr::NonNull;
 use std::sync::atomic::{self, Ordering};
 
-use lazy_static::lazy_static;
-
 use crate::hazard::{HazardList, HazardPtr, Protected};
 use crate::retired::{AbandonedBags, RetiredBag};
 
-lazy_static! {
-    static ref HAZARDS: HazardList = HazardList::new();
-    static ref ABANDONED: AbandonedBags = AbandonedBags::new();
-}
+static HAZARDS: HazardList = HazardList::new();
+static ABANDONED: AbandonedBags = AbandonedBags::new();
 
 /// Infallibly acquires a hazard pointer from the global list.
 ///

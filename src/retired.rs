@@ -121,7 +121,7 @@ pub struct AbandonedBags {
 impl AbandonedBags {
     /// Creates a new (empty) queue.
     #[inline]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             head: AtomicPtr::new(ptr::null_mut()),
         }

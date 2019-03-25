@@ -59,9 +59,9 @@ pub struct HazardList {
 impl HazardList {
     /// Creates a new empty list.
     #[inline]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
-            head: AtomicPtr::default(),
+            head: AtomicPtr::new(ptr::null_mut()),
         }
     }
 

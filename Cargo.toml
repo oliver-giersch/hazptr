@@ -9,5 +9,4 @@ count-release = []
 
 [dependencies]
 arrayvec = "0.4.10"
-lazy_static = "1.2.0"
 reclaim = { git = "https://github.com/oliver-giersch/reclaim.git" }
