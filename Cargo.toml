@@ -6,6 +6,8 @@ edition = "2018"
 
 [features]
 count-release = []
+maximum-reclamation-freq = []
+reduced-reclamation-freq = []
 
 [dependencies]
 arrayvec = "0.4.10"

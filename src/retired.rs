@@ -106,9 +106,6 @@ impl Drop for Retired {
     }
 }
 
-trait Any {}
-impl<T> Any for T {}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// AbandonedBags
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -171,5 +168,66 @@ impl AbandonedBags {
 
             boxed
         })
+    }
+}
+
+trait Any {}
+impl<T> Any for T {}
+
+#[cfg(test)]
+mod test {
+    use std::mem;
+    use std::ptr::NonNull;
+    use std::sync::atomic::AtomicUsize;
+
+    use super::*;
+
+    struct DropCount<'a>(&'a AtomicUsize);
+    impl Drop for DropCount<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn merge_abandoned() {
+        let count = AtomicUsize::new(0);
+
+        let mut bag1 = Box::new(RetiredBag::new());
+
+        let rec1 = NonNull::from(Box::leak(Box::new(1)));
+        let rec2 = NonNull::from(Box::leak(Box::new(2.2)));
+        let rec3 = NonNull::from(Box::leak(Box::new(String::from("String"))));
+
+        bag1.inner.push(unsafe { Retired::new_unchecked(rec1) });
+        bag1.inner.push(unsafe { Retired::new_unchecked(rec2) });
+        bag1.inner.push(unsafe { Retired::new_unchecked(rec3) });
+
+        let mut bag2 = Box::new(RetiredBag::new());
+
+        let rec4 = NonNull::from(Box::leak(Box::new(vec![1, 2, 3, 4])));
+        let rec5 = NonNull::from(Box::leak(Box::new("slice")));
+
+        bag2.inner.push(unsafe { Retired::new_unchecked(rec4) });
+        bag2.inner.push(unsafe { Retired::new_unchecked(rec5) });
+
+        let mut bag3 = Box::new(RetiredBag::new());
+
+        let rec6 = NonNull::from(Box::leak(Box::new(DropCount(&count))));
+        let rec7 = NonNull::from(Box::leak(Box::new(DropCount(&count))));
+
+        bag3.inner.push(unsafe { Retired::new_unchecked(rec6) });
+        bag3.inner.push(unsafe { Retired::new_unchecked(rec7) });
+
+        let abandoned = AbandonedBags::new();
+        abandoned.push(bag1);
+        abandoned.push(bag2);
+        abandoned.push(bag3);
+
+        let merged = abandoned.take_and_merge().unwrap();
+        assert_eq!(7, merged.inner.len());
+        assert_eq!(RetiredBag::DEFAULT_CAPACITY, merged.inner.capacity());
+        mem::drop(merged);
+        assert_eq!(2, count.load(Ordering::Relaxed));
     }
 }

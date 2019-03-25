@@ -60,7 +60,16 @@ pub struct CapacityErr;
 /// Local
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[cfg(all(
+    not(feature = "maximum-reclamation-freq"),
+    not(feature = "reduced-reclamation-freq")
+))]
 const SCAN_THRESHOLD: u32 = 100;
+#[cfg(feature = "reduced-reclamation-freq")]
+const SCAN_THRESHOLD: u32 = 200;
+#[cfg(feature = "maximum-reclamation-freq")]
+const SCAN_THRESHOLD: u32 = 1;
+
 const HAZARD_CACHE: usize = 16;
 const SCAN_CACHE: usize = 128;
 
@@ -99,6 +108,7 @@ impl Local {
         self.increase_ops_count();
     }
 
+    /// Increases the operations count and triggers a scan if the threshold is reached.
     #[inline]
     fn increase_ops_count(&mut self) {
         self.ops_count += 1;
@@ -114,7 +124,7 @@ impl Local {
         }
     }
 
-    /// Scans all hazard pointers and reclaims locally retired records that are unprotected.
+    /// Scans all global hazard pointers and reclaims locally retired records that are unprotected.
     #[inline]
     fn scan_hazards(&mut self) {
         global::collect_protected_hazards(&mut self.scan_cache);

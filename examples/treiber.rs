@@ -7,6 +7,7 @@ use hazptr::guarded;
 type Atomic<T> = hazptr::Atomic<T, reclaim::U0>;
 type Owned<T> = hazptr::Owned<T, reclaim::U0>;
 
+#[derive(Default)]
 pub struct TreiberStack<T> {
     head: Atomic<Node<T>>,
 }
@@ -59,7 +60,7 @@ impl<T: 'static> TreiberStack<T> {
                     let res = ptr::read(&*unlinked.deref().elem);
                     unlinked.reclaim();
 
-                    return Some(res)
+                    return Some(res);
                 }
             }
         }
@@ -96,6 +97,47 @@ impl<T> Node<T> {
 }
 
 fn main() {
-    let stack = TreiberStack::new();
-    stack.push(1i32);
+    use std::sync::Arc;
+    use std::thread;
+
+    const THREADS: usize = 8;
+
+    let stack = Arc::new(TreiberStack::new());
+
+    let handles: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let stack = Arc::clone(&stack);
+            thread::spawn(move || {
+                for i in 0..100 {
+                    stack.push(i);
+                }
+
+                for i in 0..1_000_000 {
+                    let res = stack.pop();
+                    stack.push(i);
+
+                    match res {
+                        Some(_) => {
+                            stack.pop();
+                        }
+                        None => {
+                            stack.push(i);
+                            stack.push(i);
+                        }
+                    };
+                }
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let mut vec = Vec::new();
+    while let Some(i) = stack.pop() {
+        vec.push(i);
+    }
+
+    println!("{:?}", vec);
 }

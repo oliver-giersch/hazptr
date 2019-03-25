@@ -21,11 +21,13 @@ pub fn acquire_hazard_for(ptr: NonNull<()>) -> HazardPtr {
 #[inline]
 pub fn collect_protected_hazards(vec: &mut Vec<Protected>) {
     vec.clear();
+
     // (GLO:1) this `SeqCst` fence establishes a total order with the `SeqCst` store in (HAZ:2) and
     // the `SeqCst` CAS (LIS:3P)
     // sequential consistency is required here in order to ensure that all stores to `protected` to
     // all hazard pointers are totally ordered and thus visible when the hazard pointers are scanned
     atomic::fence(Ordering::SeqCst);
+
     vec.extend(
         HAZARDS
             .iter()

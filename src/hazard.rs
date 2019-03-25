@@ -14,6 +14,7 @@
 //! Whenever a thread reads a pointer to a data structure from shared memory it has to acquire a
 //! hazard pointer for it before this pointer can be safely dereferenced. These pointers are a
 
+use std::ops::Deref;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
@@ -33,11 +34,12 @@ const RESERVED: *mut () = 1 as *mut ();
 /// An RAII wrapper for a global reference to a hazard pair.
 pub struct HazardPtr(&'static Hazard);
 
-impl HazardPtr {
-    /// Marks the hazard as actively protecting the given pointer.
+impl Deref for HazardPtr {
+    type Target = Hazard;
+
     #[inline]
-    pub fn set_protected(&self, protect: NonNull<()>) {
-        self.0.set_protected(protect);
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -92,7 +94,7 @@ impl Hazard {
 
     /// Marks the hazard as actively protecting the given pointer.
     #[inline]
-    fn set_protected(&self, protect: NonNull<()>) {
+    pub fn set_protected(&self, protect: NonNull<()>) {
         // (HAZ:2) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1) and establishes
         // a total order of all stores
         self.protected.store(protect.as_ptr(), Ordering::SeqCst);
@@ -123,5 +125,38 @@ impl Protected {
     #[inline]
     pub fn address(self) -> usize {
         self.0.as_ptr() as usize
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::ptr::NonNull;
+    use std::sync::atomic::Ordering;
+
+    use super::*;
+
+    #[test]
+    fn protect_hazard() {
+        let ptr = NonNull::from(&1);
+
+        let hazard = Hazard::new(ptr.cast());
+        assert_eq!(
+            ptr.as_ptr() as usize,
+            hazard.protected(Ordering::Relaxed).unwrap().address()
+        );
+
+        hazard.set_free(Ordering::Relaxed);
+        assert_eq!(None, hazard.protected(Ordering::Relaxed));
+        assert_eq!(FREE, hazard.protected.load(Ordering::Relaxed));
+
+        hazard.set_reserved(Ordering::Relaxed);
+        assert_eq!(None, hazard.protected(Ordering::Relaxed));
+        assert_eq!(RESERVED, hazard.protected.load(Ordering::Relaxed));
+
+        hazard.set_protected(ptr.cast());
+        assert_eq!(
+            ptr.as_ptr() as usize,
+            hazard.protected(Ordering::Relaxed).unwrap().address()
+        );
     }
 }
