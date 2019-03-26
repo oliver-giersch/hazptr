@@ -53,6 +53,12 @@ pub fn increase_ops_count() {
     LOCAL.with(|cell| unsafe { &mut *cell.get() }.increase_ops_count());
 }
 
+#[cfg(test)]
+#[inline]
+pub fn cached_hazards_count() -> usize {
+    LOCAL.with(|cell| unsafe { &*cell.get() }.hazard_cache.len())
+}
+
 /// Marker type for returning `Err` results.
 pub struct CapacityErr;
 
@@ -119,24 +125,28 @@ impl Local {
                 self.retired_bag.merge(abandoned_bag.inner);
             }
 
-            self.scan_hazards();
+            let _ = self.scan_hazards();
             self.ops_count = 0;
         }
     }
 
-    /// Scans all global hazard pointers and reclaims locally retired records that are unprotected.
+    /// Reclaims all locally retired records that are unprotected and returns the number of
+    /// reclaimed records.
     #[inline]
-    fn scan_hazards(&mut self) {
+    fn scan_hazards(&mut self) -> usize {
         global::collect_protected_hazards(&mut self.scan_cache);
 
         let scan_cache = &mut self.scan_cache;
         scan_cache.sort_unstable();
 
+        let prev = self.retired_bag.inner.len();
         self.retired_bag.inner.retain(move |retired| {
             scan_cache
                 .binary_search_by(|protected| protected.address().cmp(&retired.address()))
                 .is_ok()
-        })
+        });
+
+        prev - self.retired_bag.inner.len()
     }
 }
 

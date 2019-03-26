@@ -190,7 +190,7 @@ mod test {
     }
 
     #[test]
-    fn merge_abandoned() {
+    fn abandoned_bags() {
         let count = AtomicUsize::new(0);
 
         let mut bag1 = Box::new(RetiredBag::new());

@@ -129,7 +129,7 @@ impl Protected {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use std::ptr::NonNull;
     use std::sync::atomic::Ordering;
 
