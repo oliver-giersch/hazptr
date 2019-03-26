@@ -32,15 +32,15 @@ unsafe impl Reclaim for HP {
     type RecordHeader = ();
 
     #[inline]
-    unsafe fn reclaim<T, N: Unsigned>(unlinked: Unlinked<T, N>)
+    unsafe fn retire<T, N: Unsigned>(unlinked: Unlinked<T, N>)
     where
         T: 'static,
     {
-        Self::reclaim_unchecked(unlinked)
+        Self::retire_unchecked(unlinked)
     }
 
     #[inline]
-    unsafe fn reclaim_unchecked<T, N: Unsigned>(unlinked: Unlinked<T, N>) {
+    unsafe fn retire_unchecked<T, N: Unsigned>(unlinked: Unlinked<T, N>) {
         let unmarked = Unlinked::into_marked_non_null(unlinked).decompose_non_null();
         local::retire_record(Retired::new_unchecked(unmarked));
     }
@@ -201,7 +201,8 @@ fn acquire_hazard_for(protect: NonNull<()>) -> HazardPtr {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::Ordering;
+    use std::sync::{atomic::Ordering, Arc, Barrier};
+    use std::thread;
 
     use reclaim::U0;
 
@@ -260,5 +261,59 @@ mod tests {
         let reference = guard.shared().map(|shared| unsafe { shared.deref() });
         assert_eq!(Some(&1), reference);
         assert!(guard.hazard.is_some());
+    }
+
+    #[test]
+    #[cfg_attr(feature = "count-release", ignore)]
+    fn abandon_on_panic() {
+        static RECORD1: Atomic<i32, U0> = Atomic::null();
+        static RECORD2: Atomic<i32, U0> = Atomic::null();
+
+        RECORD1.store(Owned::new(1), Ordering::Relaxed);
+        RECORD2.store(Owned::new(2), Ordering::Relaxed);
+
+        let barrier1 = Arc::new(Barrier::new(2));
+        let barrier2 = Arc::new(Barrier::new(2));
+
+        let h1 = {
+            let barrier1 = Arc::clone(&barrier1);
+            let barrier2 = Arc::clone(&barrier2);
+            thread::spawn(move || {
+                let mut guard1 = guarded();
+                let mut guard2 = guarded();
+
+                RECORD1.load(Ordering::Relaxed, &mut guard1);
+                RECORD2.load(Ordering::Relaxed, &mut guard2);
+
+                barrier1.wait();
+                barrier2.wait()
+            })
+        };
+
+        let h2 = thread::spawn(move || {
+            barrier1.wait();
+            unsafe {
+                RECORD1
+                    .swap(Owned::none(), Ordering::Relaxed)
+                    .unwrap()
+                    .retire();
+                RECORD2
+                    .swap(Owned::none(), Ordering::Relaxed)
+                    .unwrap()
+                    .retire();
+            }
+
+            panic!("on panic: release all acquired hazards and abandon retired records")
+        });
+
+        // thread 2 has panicked and abandoned two retired records
+        h2.join().unwrap_err();
+        // adopt records before thread 1 exits and adopts them
+        let abandoned = global::try_adopt_abandoned_records().unwrap();
+        barrier2.wait();
+        h1.join().unwrap();
+
+        assert_eq!(abandoned.inner.len(), 2);
+        // the records can be safely dropped since thread 1 is already gone
     }
 }

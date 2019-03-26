@@ -20,6 +20,10 @@ impl Drop for DropCount<'_> {
 }
 
 fn main() {
+    check_leaks();
+}
+
+fn check_leaks() {
     const THREADS: usize = 8;
     const PER_THREAD_ALLOCATIONS: usize = 1_000_000 + 1_000;
     static COUNTERS: [ThreadCount; THREADS] = [

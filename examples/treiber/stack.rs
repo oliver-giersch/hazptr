@@ -53,7 +53,7 @@ impl<T: 'static> TreiberStack<T> {
             {
                 unsafe {
                     let res = ptr::read(&*unlinked.deref().elem);
-                    unlinked.reclaim();
+                    unlinked.retire();
 
                     return Some(res);
                 }
