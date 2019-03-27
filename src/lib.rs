@@ -4,7 +4,7 @@
 use std::ptr::NonNull;
 use std::sync::atomic::Ordering;
 
-use reclaim::{MarkedNonNull, MarkedPtr, NotEqual, Protected, Reclaim, Unsigned};
+use reclaim::{MarkedNonNull, MarkedPtr, NotEqual, Protect, Reclaim, Unsigned};
 
 pub type Atomic<T, N> = reclaim::Atomic<T, N, HP>;
 pub type Shared<'g, T, N> = reclaim::Shared<'g, T, N, HP>;
@@ -50,7 +50,7 @@ unsafe impl Reclaim for HP {
 
 /// Creates a new (empty) guarded pointer that can be used to acquire hazard pointers.
 #[inline]
-pub fn guarded<T, N: Unsigned>() -> impl Protected<Item = T, MarkBits = N, Reclaimer = HP> {
+pub fn guarded<T, N: Unsigned>() -> impl Protect<Item = T, MarkBits = N, Reclaimer = HP> {
     Guarded::new()
 }
 
@@ -75,7 +75,7 @@ impl<T, N: Unsigned> Guarded<T, N> {
     }
 }
 
-impl<T, N: Unsigned> Protected for Guarded<T, N> {
+impl<T, N: Unsigned> Protect for Guarded<T, N> {
     type Item = T;
     type MarkBits = N;
     type Reclaimer = HP;
@@ -131,12 +131,12 @@ impl<T, N: Unsigned> Protected for Guarded<T, N> {
     fn acquire_if_equal(
         &mut self,
         atomic: &Atomic<T, N>,
-        compare: MarkedPtr<T, N>,
+        expected: MarkedPtr<T, N>,
         order: Ordering,
     ) -> Result<Option<Shared<T, N>>, NotEqual> {
         match MarkedNonNull::new(atomic.load_raw(Ordering::Relaxed)) {
             // values of `atomic` and `compare` are non-null and equal
-            Some(ptr) if ptr == compare => {
+            Some(ptr) if ptr == expected => {
                 let unmarked = ptr.decompose_non_null();
                 let hazard = self
                     .take_hazard_and_protect(unmarked.cast())
@@ -155,7 +155,7 @@ impl<T, N: Unsigned> Protected for Guarded<T, N> {
                 Ok(Some(unsafe { Shared::from_marked_non_null(ptr) }))
             }
             // values of `atomic` and `compare` are both null
-            None if compare.is_null() => {
+            None if expected.is_null() => {
                 self.release();
                 Ok(None)
             }

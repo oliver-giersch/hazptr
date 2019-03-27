@@ -21,6 +21,8 @@ use std::mem;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicPtr, Ordering};
 
+type Record<T> = reclaim::Record<T, crate::HP>;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // RetiredBag
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -84,7 +86,7 @@ impl Retired {
     #[inline]
     pub unsafe fn new_unchecked<'a, T: 'a>(record: NonNull<T>) -> Self {
         // lifetime transmuting is sound when no non-static references are accessed during drop
-        let any: NonNull<dyn Any + 'a> = record;
+        let any: NonNull<dyn Any + 'a> = Record::get_record(record);
         let any: NonNull<dyn Any + 'static> = mem::transmute(any);
         Self { record: any }
     }
@@ -99,8 +101,6 @@ impl Retired {
 impl Drop for Retired {
     #[inline]
     fn drop(&mut self) {
-        // this is safe since the HP reclamation scheme does not require any additional information
-        // per allocated record
         mem::drop(unsafe { Box::from_raw(self.record.as_ptr()) });
     }
 }
