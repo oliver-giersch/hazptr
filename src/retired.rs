@@ -22,7 +22,7 @@ use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-/// RetiredBag
+// RetiredBag
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// List for caching reclaimed records before they can be finally dropped/deallocated.
@@ -64,7 +64,7 @@ impl RetiredBag {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-/// Retired
+// Retired
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Fat pointer to a retired record that has not yet been reclaimed and deallocated
@@ -83,8 +83,7 @@ impl Retired {
     /// safe, as long as the type's `Drop` implementation does not access any non-static references.
     #[inline]
     pub unsafe fn new_unchecked<'a, T: 'a>(record: NonNull<T>) -> Self {
-        // transmuting the lifetime is sound as long as the `Drop` impl does not access any
-        // non-static references, which has to be ensured by the caller
+        // lifetime transmuting is sound when no non-static references are accessed during drop
         let any: NonNull<dyn Any + 'a> = record;
         let any: NonNull<dyn Any + 'static> = mem::transmute(any);
         Self { record: any }
@@ -107,7 +106,7 @@ impl Drop for Retired {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-/// AbandonedBags
+// AbandonedBags
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Concurrent queue containing all retired bags abandoned by exited threads
