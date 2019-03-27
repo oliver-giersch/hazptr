@@ -67,12 +67,12 @@ fn abandon_on_panic() {
     static RECORD2: Atomic<i32, U0> = Atomic::null();
 
     RECORD1.store(Owned::new(1), Ordering::Relaxed);
-    RECORD2.store(Owned::new(2), Ordering::Relaxed);
+    RECORD2.store(Owned::new(1), Ordering::Relaxed);
 
     let barrier1 = Arc::new(Barrier::new(2));
     let barrier2 = Arc::new(Barrier::new(2));
 
-    let h1 = {
+    let thread1 = {
         let barrier1 = Arc::clone(&barrier1);
         let barrier2 = Arc::clone(&barrier2);
         thread::spawn(move || {
@@ -87,7 +87,7 @@ fn abandon_on_panic() {
         })
     };
 
-    let h2 = thread::spawn(move || {
+    let thread2 = thread::spawn(move || {
         barrier1.wait();
         unsafe {
             RECORD1
@@ -100,15 +100,15 @@ fn abandon_on_panic() {
                 .retire();
         }
 
-        panic!("on panic: release all acquired hazards and abandon retired records")
+        panic!("explicit panic: release all acquired hazards and abandon retired records")
     });
 
     // thread 2 has panicked and abandoned two retired records
-    h2.join().unwrap_err();
+    thread2.join().unwrap_err();
     // adopt records before thread 1 exits and adopts them
     let abandoned = global::try_adopt_abandoned_records().unwrap();
     barrier2.wait();
-    h1.join().unwrap();
+    thread1.join().unwrap();
 
     assert_eq!(abandoned.inner.len(), 2);
     // the records can be safely dropped since thread 1 is already gone

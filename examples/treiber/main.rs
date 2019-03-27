@@ -20,10 +20,6 @@ impl Drop for DropCount<'_> {
 }
 
 fn main() {
-    check_leaks();
-}
-
-fn check_leaks() {
     const THREADS: usize = 8;
     const PER_THREAD_ALLOCATIONS: usize = 1_000_000 + 1_000;
     static COUNTERS: [ThreadCount; THREADS] = [
@@ -54,10 +50,9 @@ fn check_leaks() {
                 }
 
                 println!(
-                    "thread {} has deallocated {:7}/{} records before exiting",
+                    "thread {} reclaimed {:7} records before exiting",
                     id,
-                    counter.load(Ordering::Relaxed),
-                    PER_THREAD_ALLOCATIONS
+                    counter.load(Ordering::Relaxed)
                 );
             })
         })
