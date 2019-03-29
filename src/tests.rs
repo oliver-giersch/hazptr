@@ -61,6 +61,21 @@ fn acquire_direct() {
 }
 
 #[test]
+fn acquire_if_equal() {
+    let atomic: Atomic<i32, U0> = Atomic::null();
+    let mut guard = Guarded::new();
+    let res = guard.acquire_if_equal(&atomic, MarkedPtr::null(), Ordering::Relaxed);
+    assert_eq!(Some(None), res);
+    assert!(guard.shared().is_none());
+
+    let owned = Owned::new(1);
+    let marked = owned.as_marked();
+    atomic.store(owned, Ordering::Relaxed);
+    let res = guard.acquire_if_equal(&atomic, MarkedPtr::null(), Ordering::Relaxed);
+    assert!(res.is_ok());
+}
+
+#[test]
 #[cfg_attr(feature = "count-release", ignore)]
 fn abandon_on_panic() {
     static RECORD1: Atomic<i32, U0> = Atomic::null();

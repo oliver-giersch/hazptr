@@ -1,15 +1,93 @@
-//! Hazard Pointer based concurrent memory reclamation adhering to the reclamation interface defined
-//! by the `reclaim` crate.
+//! Hazard-pointer based concurrent memory reclamation.
+//!
+//! A difficult problem that has to be considered when implementing lock-free collections or data
+//! structures is deciding, when a removed entry can be safely deallocated.
+//! It is usually not correct to deallocate removed entries right away, because different threads
+//! might still hold references to such entries and could consequently access already freed memory.
+//!
+//! Concurrent memory reclamation schemes solve that problem by extending the lifetime of removed
+//! entries for a certain **grace period**.
+//! After this period it must be impossible for other threads to have any references to these
+//! entries anymore and they can be finally deallocated.
+//! This is similar to the concept of **Garbage Collection** in languages like Go and Java, but with
+//! a much more limited scope.
+//!
+//! The Hazard-pointer reclamation scheme was described by Maged M. Michael in 2004 [[1]].
+//! It requires every *read* of an entry from shared memory to be accompanied by a global
+//! announcement marking the read entry as protected.
+//! Threads must store removed (retired) entries in a local cache and regularly attempt to reclaim
+//! all cached records in bulk.
+//! A record is safe to be reclaimed, once there is no hazard pointer protecting it anymore.
+//!
+//! # Reclamation Interface and Pointer Types
+//!
+//! The API of this library follows the abstract interface defined by the [`reclaim`][reclaim]
+//! crate.
+//!
+//! The primary type exposed by this API is [`Atomic`][Atomic], which is a shared atomic pointer
+//! with similar semantics to `Option<Box<T>>`.
+//! It provides all operations that are also supported by `AtomicPtr`, such as `store`, `load` or
+//! `compare_exchange`.
+//! All load operations on an [`Atomic`][Atomic] return (optional) [`Shared`][Shared] references.
+//! [`Shared`][Shared] is a non-nullable pointer type that is protected by a hazard pointer and has
+//! similar semantics to `&T`.
+//! *Read-Modify-Write* operations (`swap`, `compare_exchange`, `compare_exchange_weak`) return
+//! [`Unlinked`][Unlinked] values. Only values that are successfully unlinked in this manner can be
+//! retired, which means they will be automatically reclaimed at some some point when it is safe to
+//! do so.
+//!
+//! # Compare-and-Swap
+//!
+//! The atomic [`compare_exchange`][compare_exchange] (compare-and-swap) method of the [`Atomic`][Atomic]
+//! type is highly versatile and uses generics and (internal) traits in order to achieve some sense
+//! of argument *overloading*.
+//! The `current` and `new` arguments accept a wide variety of pointer types interchangeably.
+//! For instance, `current` accepts values of types like [`Shared`][Shared] or `Option<Shared>`.
+//! It also accepts [`Unprotected`][Unprotected] or `Option<Unprotected>` values.
+//! A compare-and-swap can only succeed if the `current` value equals the value that is actually
+//! stored in the [`Atomic`][Atomic].
+//! Consequently, the return type of this method adapts to the input type:
+//! When `current` is either a [`Shared`][Shared] or an [`Unprotected`][Unprotected], the return
+//! type is [`Unlinked`][Unlinked], since all of these types are non-nullable.
+//! However, when `current` is an `Option`, the return type is `Option<Unlinked>`.
+//!
+//! The `new` argument accepts types like [`Owned`][Owned], [`Shared`][Shared], [`Unlinked`][Unlinked],
+//! [`Unprotected`][Unprotected] or `Option` thereof.
+//! Care has to be taken when inserting a [`Shared`][Shared] in this way, as it is possible to
+//! insert the value twice at different positions of the same collection, which violates the primary
+//! reclamation invariant (which is also the reason why `retire` is unsafe): It must be
+//! impossible for a thread to read a reference to a value that has previously been retired.
+//!
+//! # Pointer Tagging
+//!
+//! ...
+//!
+//! [1]: https://dl.acm.org/citation.cfm?id=987595
+//! [reclaim]: https://github.com/oliver-giersch/reclaim
+//! [Atomic]: type.Atomic.html
+//! [Shared]: type.Shared.html
+//! [Unlinked]: type.Unlinked.html
+//! [Unprotected]: type.Unprotected.html
+//! [Owned]: type.Owned.html
+//! [compare_exchange]: [type.Atomic.html#method.compare_exchange]
 
 use std::ptr::NonNull;
 use std::sync::atomic::Ordering;
 
 use reclaim::{MarkedNonNull, MarkedPtr, NotEqual, Protect, Reclaim, Unsigned};
 
+/// Atomic pointer that must be either `null` or valid. Loads of non-null values must acquire hazard
+/// pointers and are hence protected from reclamation.
 pub type Atomic<T, N> = reclaim::Atomic<T, N, HP>;
+/// Shared reference to a value loaded from shared memory that is protected by a hazard pointer.
 pub type Shared<'g, T, N> = reclaim::Shared<'g, T, N, HP>;
+/// TODO: Doc...
 pub type Owned<T, N> = reclaim::Owned<T, N, HP>;
+/// Unique reference to a value that has been successfully unlinked and can be retired.
 pub type Unlinked<T, N> = reclaim::Unlinked<T, N, HP>;
+/// Shared reference to a value loaded from shared memory that is **not** safe to dereference and
+/// could be reclaimed at any point.
+pub type Unprotected<T, N> = reclaim::Unprotected<T, N, HP>;
 
 mod global;
 mod hazard;
@@ -30,14 +108,11 @@ use crate::retired::Retired;
 pub struct HP;
 
 unsafe impl Reclaim for HP {
-    // hazard pointers do not require any extra information per allocated record
+    // hazard pointers do not require any extra information per each allocated record
     type RecordHeader = ();
 
     #[inline]
-    unsafe fn retire<T, N: Unsigned>(unlinked: Unlinked<T, N>)
-    where
-        T: 'static,
-    {
+    unsafe fn retire<T: 'static, N: Unsigned>(unlinked: Unlinked<T, N>) {
         Self::retire_unchecked(unlinked)
     }
 
@@ -59,6 +134,7 @@ pub fn guarded<T, N: Unsigned>() -> impl Protect<Item = T, MarkBits = N, Reclaim
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// A guarded pointer that can be used to acquire hazard pointers.
+#[derive(Debug)]
 pub struct Guarded<T, N: Unsigned> {
     hazard: Option<(HazardPtr, MarkedNonNull<T, N>)>,
 }

@@ -24,7 +24,7 @@ pub fn acquire_hazard() -> Option<HazardPtr> {
     })
 }
 
-/// Tries to cache the given hazard in the thread local storage.
+/// Attempts to cache the given hazard in the thread local storage.
 #[inline]
 pub fn try_recycle_hazard(hazard: &'static Hazard) -> Result<(), CapacityErr> {
     LOCAL.with(move |cell| {
@@ -59,7 +59,7 @@ pub fn cached_hazards_count() -> usize {
     LOCAL.with(|cell| unsafe { &*cell.get() }.hazard_cache.len())
 }
 
-/// Marker type for returning `Err` results.
+/// zero-size marker type for returning `Err` results.
 pub struct CapacityErr;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -157,7 +157,7 @@ impl Drop for Local {
             hazard.set_free(Ordering::Relaxed);
         }
 
-        // (LOC:2) this `Release` fence synchronizes-with ...
+        // (LOC:2) this `Release` fence synchronizes-with the `SeqCst` fence (GLO:1)
         atomic::fence(Ordering::Release);
 
         self.scan_hazards();

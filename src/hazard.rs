@@ -1,18 +1,21 @@
-//! Data structures and functionality for temporarily protecting specific pointers (i.e. hazard
-//! pointers) acquired by specific threads from concurrent reclamation.
+//! Data structures and functionality for temporarily protecting specific pointers acquired by
+//! specific threads from concurrent reclamation.
 //!
 //! # Global List
 //!
 //! All hazard pointers are stored in a global linked list. This list can never remove and
 //! deallocate any of its entries, since this would require some scheme for concurrent memory
-//! reclamation on its own.
-//! Consequently, this linked list can only grow during the entire program runtime and is never
-//! actually dropped. However, its individual entries can be reused arbitrarily often.
+//! reclamation on its own. Consequently, this linked list can only grow during the entire program
+//! runtime and is never actually dropped. However, its individual entries can be reused arbitrarily
+//! often.
 //!
 //! # Hazard Pointers
 //!
-//! Whenever a thread reads a pointer to a data structure from shared memory it has to acquire a
-//! hazard pointer for it before this pointer can be safely dereferenced. These pointers are a
+//! Whenever a thread reads a value in a data structure from shared memory it has to acquire a
+//! hazard pointer for it before the loaded reference to the value can be safely dereferenced. These
+//! pointers are stored in the global list of hazard pointers. Any time a thread wants to reclaim a
+//! retired record, it has to ensure that no hazard pointer in this list still protects the retired
+//! value.
 
 use std::ops::Deref;
 use std::ptr::NonNull;
@@ -32,6 +35,7 @@ const RESERVED: *mut () = 1 as *mut ();
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// An RAII wrapper for a global reference to a hazard pair.
+#[derive(Debug)]
 pub struct HazardPtr(&'static Hazard);
 
 impl Deref for HazardPtr {
@@ -55,7 +59,7 @@ impl Drop for HazardPtr {
     fn drop(&mut self) {
         // try to store the hazard in the thread local cache or mark is as globally available
         if local::try_recycle_hazard(self.0).is_err() {
-            // (HAZ:1) this `Release` store synchronizes-with ...
+            // (HAZ:1) this `Release` store synchronizes-with the `SeqCst` CAS (LIS:3P)
             self.0.set_free(Ordering::Release);
         }
     }
@@ -66,6 +70,7 @@ impl Drop for HazardPtr {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// A pointer visible to all threads that is protected from reclamation.
+#[derive(Debug)]
 pub struct Hazard {
     protected: AtomicPtr<()>,
 }
@@ -96,7 +101,7 @@ impl Hazard {
     #[inline]
     pub fn set_protected(&self, protect: NonNull<()>) {
         // (HAZ:2) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1) and establishes
-        // a total order of all stores
+        // a total order of all stores writing a protected pointer
         self.protected.store(protect.as_ptr(), Ordering::SeqCst);
     }
 
