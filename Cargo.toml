@@ -5,6 +5,7 @@ authors = ["Oliver Giersch"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/oliver-giersch/hazptr.git"
+documentation = "https://docs.rs/hazptr"
 description = "hazard pointer based concurrent memory reclamation"
 keywords = ["hazard", "pointer", "concurrent", "reclamation", "lock-free"]
 edition = "2018"
