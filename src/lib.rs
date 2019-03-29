@@ -1,4 +1,4 @@
-//! Hazard-pointer based concurrent memory reclamation.
+//! Hazard pointer based concurrent memory reclamation.
 //!
 //! A difficult problem that has to be considered when implementing lock-free collections or data
 //! structures is deciding, when a removed entry can be safely deallocated.
