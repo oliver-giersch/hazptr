@@ -97,12 +97,16 @@
 //! [Unlinked]: type.Unlinked.html
 //! [Unprotected]: type.Unprotected.html
 //! [Owned]: type.Owned.html
-//! [compare_exchange]: [type.Atomic.html#method.compare_exchange]
+//! [compare_exchange]: type.Atomic.html#method.compare_exchange
 
 use std::ptr::NonNull;
 use std::sync::atomic::Ordering;
 
-use reclaim::{MarkedNonNull, MarkedPtr, NotEqual, Protect, Reclaim, Unsigned};
+pub use reclaim;
+pub use reclaim::typenum;
+
+use reclaim::{MarkedNonNull, MarkedPtr, NotEqual, Protect, Reclaim};
+use typenum::Unsigned;
 
 /// Atomic pointer that must be either `null` or valid. Loads of non-null values must acquire hazard
 /// pointers and are hence protected from reclamation.

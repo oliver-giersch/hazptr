@@ -4,8 +4,8 @@ use std::sync::atomic::Ordering;
 
 use hazptr::guarded;
 
-type Atomic<T> = hazptr::Atomic<T, reclaim::U0>;
-type Owned<T> = hazptr::Owned<T, reclaim::U0>;
+type Atomic<T> = hazptr::Atomic<T, hazptr::typenum::U0>;
+type Owned<T> = hazptr::Owned<T, hazptr::typenum::U0>;
 
 #[derive(Default)]
 pub struct TreiberStack<T> {
@@ -43,6 +43,7 @@ impl<T: 'static> TreiberStack<T> {
         let mut guard = guarded();
 
         while let Some(head) = self.head.load(Ordering::Acquire, &mut guard) {
+            //load
             let next = unsafe { head.deref() }
                 .next
                 .load_unprotected(Ordering::Relaxed);

@@ -59,7 +59,8 @@ pub fn cached_hazards_count() -> usize {
     LOCAL.with(|cell| unsafe { &*cell.get() }.hazard_cache.len())
 }
 
-/// zero-size marker type for returning `Err` results.
+/// Zero-size marker type for returning `Err` results.
+#[derive(Debug)]
 pub struct CapacityErr;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

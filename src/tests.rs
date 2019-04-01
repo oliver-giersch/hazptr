@@ -1,7 +1,7 @@
 use std::sync::{atomic::Ordering, Arc, Barrier};
 use std::thread;
 
-use reclaim::U0;
+use typenum::U0;
 
 use super::*;
 
@@ -65,14 +65,19 @@ fn acquire_if_equal() {
     let atomic: Atomic<i32, U0> = Atomic::null();
     let mut guard = Guarded::new();
     let res = guard.acquire_if_equal(&atomic, MarkedPtr::null(), Ordering::Relaxed);
-    assert_eq!(Some(None), res);
+    assert_eq!(Ok(None), res);
     assert!(guard.shared().is_none());
 
     let owned = Owned::new(1);
     let marked = owned.as_marked();
     atomic.store(owned, Ordering::Relaxed);
     let res = guard.acquire_if_equal(&atomic, MarkedPtr::null(), Ordering::Relaxed);
+    assert!(res.is_err());
+    assert!(guard.shared().is_none());
+
+    let res = guard.acquire_if_equal(&atomic, marked, Ordering::Relaxed);
     assert!(res.is_ok());
+    assert_eq!(guard.shared().unwrap().as_marked(), marked);
 }
 
 #[test]

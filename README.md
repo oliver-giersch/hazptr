@@ -2,6 +2,10 @@
 
 Hazard pointer based concurrent memory reclamation.
 
+[![Latest version](https://img.shields.io/crates/v/hazptr.svg)](https://crates.io/crates/hazptr)
+[![Documentation](https://docs.rs/hazptr/badge.svg)](https://docs.rs/hazptr)
+![License](https://img.shields.io/crates/l/hazptr.svg)
+
 Whenever a thread reads a value from shared memory it also protects the loaded value with a globally visible
 *hazard pointer*.
 All threads can *retire* shared values that are no longer needed and accessible and cache them locally.
@@ -58,11 +62,22 @@ i.e either retiring records or releasing acquired hazard pointers (depending on 
 The reduced setting leads to less frequent scans compared to the default setting when no feature is selected.
 
 Generally, a lower reclamation frequency is better performance-wise, but could lead to accumulation of large amounts of
-unreclaimed garbage. 
+unreclaimed garbage.
+
+## Down the Road
+
+In its current state, `hazptr` requires two separate `std` features, meaning it is not suitable for `no_std`
+environments.
+Specifically these features are:
+
+- automatic management of thread local storage (the `thread_local!` macro)
+- a global allocator
+
+Future developments may include relaxing these restrictions and adding support for custom allocators.
 
 ## License
 
-`hazptr` is distributed under the terms of both the MIT license and the
+Hazptr is distributed under the terms of both the MIT license and the
 Apache License (Version 2.0).
 
 See [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT) for details.
