@@ -1,4 +1,4 @@
-//! Thread local state and caches for reserving hazard pointers or storing reclaimed records.
+//! Thread local state and caches for reserving hazard pointers or storing retired records.
 
 use std::cell::UnsafeCell;
 use std::mem::ManuallyDrop;

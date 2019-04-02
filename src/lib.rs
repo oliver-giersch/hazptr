@@ -92,12 +92,12 @@
 //!
 //! [1]: https://dl.acm.org/citation.cfm?id=987595
 //! [reclaim]: https://github.com/oliver-giersch/reclaim
-//! [Atomic]: type.Atomic.html
-//! [Shared]: type.Shared.html
-//! [Unlinked]: type.Unlinked.html
-//! [Unprotected]: type.Unprotected.html
-//! [Owned]: type.Owned.html
-//! [compare_exchange]: type.Atomic.html#method.compare_exchange
+//! [Atomic]: Atomic
+//! [Shared]: Shared
+//! [Unlinked]: Unlinked
+//! [Unprotected]: Unprotected
+//! [Owned]: Owned
+//! [compare_exchange]: reclaim::Atomic::compare_exchange
 
 use std::ptr::NonNull;
 use std::sync::atomic::Ordering;
@@ -113,7 +113,7 @@ use typenum::Unsigned;
 pub type Atomic<T, N> = reclaim::Atomic<T, N, HP>;
 /// Shared reference to a value loaded from shared memory that is protected by a hazard pointer.
 pub type Shared<'g, T, N> = reclaim::Shared<'g, T, N, HP>;
-/// A pointer type for heap allocation like `Box` that can be marked.
+/// A pointer type for heap allocation like [`Box`](std::boxed::Box) that can be marked.
 pub type Owned<T, N> = reclaim::Owned<T, N, HP>;
 /// Unique reference to a value that has been successfully unlinked and can be retired.
 pub type Unlinked<T, N> = reclaim::Unlinked<T, N, HP>;
@@ -274,7 +274,7 @@ impl<T, N: Unsigned> Protect for Guarded<T, N> {
 
 impl<T, N: Unsigned> Guarded<T, N> {
     /// Takes the internally stored hazard pointer, sets it to protect the given pointer (`protect`)
-    /// and wraps it in a `HazardPtr`.
+    /// and wraps it in a [`HazardPtr`](HazardPtr).
     #[inline]
     fn take_hazard_and_protect(&mut self, protect: NonNull<()>) -> Option<HazardPtr> {
         self.hazard.take().map(|(handle, _)| {

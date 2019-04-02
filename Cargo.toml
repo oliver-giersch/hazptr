@@ -21,4 +21,5 @@ reduced-reclamation-freq = []
 
 [dependencies]
 arrayvec = "0.4.10"
-reclaim = { git = "https://github.com/oliver-giersch/reclaim.git" }
+reclaim = { git = "https://github.com/oliver-giersch/reclaim.git", rev = "f716876" }
+

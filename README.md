@@ -36,6 +36,12 @@ individual records for long periods of time.
 Epoch-based schemes, on the other hand, completely prevent reclamation by all threads whenever records need to be
 protected.
 
+## Record Lifecycle
+
+```
+allocate --> insert --> reference --> unlink --> retire --> reclaim (drop + deallocate) 
+```
+
 ## Examples
 
 See [examples/treiber/stack.rs](examples/treiber/stack.rs) for an implementation of Treiber's stack with hazard
