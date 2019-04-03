@@ -135,19 +135,23 @@ impl Local {
     /// reclaimed records.
     #[inline]
     fn scan_hazards(&mut self) -> usize {
+        let len = self.retired_bag.inner.len();
+        if len == 0 {
+            return 0;
+        }
+
         global::collect_protected_hazards(&mut self.scan_cache);
 
         let scan_cache = &mut self.scan_cache;
         scan_cache.sort_unstable();
 
-        let prev = self.retired_bag.inner.len();
         self.retired_bag.inner.retain(move |retired| {
             scan_cache
                 .binary_search_by(|protected| protected.address().cmp(&retired.address()))
                 .is_ok()
         });
 
-        prev - self.retired_bag.inner.len()
+        len - self.retired_bag.inner.len()
     }
 }
 

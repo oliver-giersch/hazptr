@@ -74,7 +74,7 @@ unreclaimed garbage.
 
 In its current state, `hazptr` requires two separate `std` features, meaning it is not suitable for `no_std`
 environments.
-Specifically these features are:
+Specifically, these features are:
 
 - automatic management of thread local storage (the `thread_local!` macro)
 - a global allocator
