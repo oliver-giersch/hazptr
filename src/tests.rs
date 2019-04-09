@@ -1,6 +1,8 @@
+use std::mem;
 use std::sync::{atomic::Ordering, Arc, Barrier};
 use std::thread;
 
+use assert_matches::assert_matches;
 use typenum::U0;
 
 use super::*;
@@ -8,7 +10,7 @@ use super::*;
 #[test]
 fn empty_guarded() {
     let guard: Guarded<i32, U0> = Guarded::new();
-    assert!(guard.hazard.is_none());
+    assert_eq!(guard.inner, State::None);
     assert!(guard.shared().is_none());
 }
 
@@ -32,6 +34,8 @@ fn acquire_null() {
     assert!(guard.shared().is_some());
     guard.release();
     assert!(guard.shared().is_none());
+    assert_eq!(local::cached_hazards_count(), 0);
+    mem::drop(guard);
     assert_eq!(local::cached_hazards_count(), 1);
 }
 
@@ -44,7 +48,7 @@ fn acquire_load() {
     assert_eq!(&1, unsafe { reference.deref() });
     let reference = guard.shared().map(|shared| unsafe { shared.deref() });
     assert_eq!(Some(&1), reference);
-    assert!(guard.hazard.is_some());
+    assert_matches!(guard.inner, State::Protected(..));
 }
 
 #[test]
@@ -57,7 +61,7 @@ fn acquire_direct() {
     assert_eq!(&1, unsafe { reference.deref() });
     let reference = guard.shared().map(|shared| unsafe { shared.deref() });
     assert_eq!(Some(&1), reference);
-    assert!(guard.hazard.is_some());
+    assert_matches!(guard.inner, State::Protected(..));
 }
 
 #[test]

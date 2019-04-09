@@ -25,20 +25,30 @@ pub fn acquire_hazard() -> Option<HazardPtr> {
 }
 
 /// Attempts to cache the given hazard in the thread local storage.
+///
+/// # Errors
+///
+/// This function can fail in two circumstances:
+/// - the function is called when the thread local state is in the process of being dropped (which
+///   can happen if a `Guarded` is stored in a thread local variable)
+/// - the thread local cache of reserved hazard pointers is already at maximum capacity
 #[inline]
-pub fn try_recycle_hazard(hazard: &'static Hazard) -> Result<(), CapacityErr> {
-    LOCAL.with(move |cell| {
-        let local = unsafe { &mut *cell.get() };
-        match local.hazard_cache.try_push(hazard) {
-            Ok(_) => {
-                // (LOC:1) this `Release` store synchronizes-with any `Acquire` load on the
-                // `protected` field of the same hazard pointer
-                hazard.set_reserved(Ordering::Release);
-                Ok(())
+pub fn try_recycle_hazard(hazard: &'static Hazard) -> Result<(), RecycleErr> {
+    LOCAL
+        .try_with(move |cell| {
+            let local = unsafe { &mut *cell.get() };
+            match local.hazard_cache.try_push(hazard) {
+                Ok(_) => {
+                    // (LOC:1) this `Release` store synchronizes-with any `Acquire` load on the
+                    // `protected` field of the same hazard pointer
+                    hazard.set_reserved(Ordering::Release);
+                    Ok(())
+                }
+                Err(_) => Err(RecycleErr::Capacity),
             }
-            Err(_) => Err(CapacityErr),
-        }
-    })
+        })
+        .or_else(|_| Err(RecycleErr::Access))
+        .and_then(|res| res)
 }
 
 /// Retires the given record and drops/deallocates it once it is safe to do so.
@@ -59,9 +69,12 @@ pub fn cached_hazards_count() -> usize {
     LOCAL.with(|cell| unsafe { &*cell.get() }.hazard_cache.len())
 }
 
-/// Zero-size marker type for returning `Err` results.
+/// Error type for thread local recycle operations.
 #[derive(Debug)]
-pub struct CapacityErr;
+pub enum RecycleErr {
+    Access,
+    Capacity,
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Local

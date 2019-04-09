@@ -11,7 +11,7 @@
 //!
 //! # Synchronization
 //!
-//! ```no_run
+//! ```ignore
 //! struct Node {
 //!     protected: #[repr(align(64))] AtomicPtr<()>,
 //!     next:      #[repr(align(64))] AtomicPtr<HazardNode>,

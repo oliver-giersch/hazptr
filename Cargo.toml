@@ -16,10 +16,13 @@ count-release = []
 
 # attempt to reclaim records after every operation (more expensive)
 maximum-reclamation-freq = []
-# attempt to reclaim records more rarely (less expensive)
+# attempt to reclaim records less often (less expensive)
 reduced-reclamation-freq = []
 
 [dependencies]
 arrayvec = "0.4.10"
-reclaim = { git = "https://github.com/oliver-giersch/reclaim.git", rev = "f716876" }
+reclaim = { git = "https://github.com/oliver-giersch/reclaim.git", rev = "8ff2a39a" }
+
+[dev-dependencies]
+assert_matches = "1.3.0"
 
