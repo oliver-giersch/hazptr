@@ -106,7 +106,7 @@ use std::sync::atomic::Ordering;
 pub use reclaim;
 pub use reclaim::typenum;
 
-use reclaim::{MarkedNonNull, MarkedPointer, MarkedPtr, NotEqual, Protect, Reclaim};
+use reclaim::{AcquireResult, MarkedNonNull, MarkedPointer, MarkedPtr, NotEqual, Protect, Reclaim};
 use typenum::Unsigned;
 
 /// Atomic pointer that must be either `null` or valid. Loads of non-null values must acquire hazard
@@ -254,7 +254,7 @@ impl<T, N: Unsigned> Protect for Guarded<T, N> {
         atomic: &Atomic<T, N>,
         expected: MarkedPtr<T, N>,
         order: Ordering,
-    ) -> Result<Option<Shared<T, N>>, NotEqual> {
+    ) -> AcquireResult<T, N, Self::Reclaimer> {
         match MarkedNonNull::new(atomic.load_raw(Ordering::Relaxed)) {
             // values of `atomic` and `compare` are non-null and equal
             Some(ptr) if ptr == expected => {
@@ -282,21 +282,6 @@ impl<T, N: Unsigned> Protect for Guarded<T, N> {
             }
             _ => Err(NotEqual),
         }
-    }
-
-    #[inline]
-    fn acquire_from_other(&mut self, other: &Self) {
-        match &other.inner {
-            State::Protected(hazard, ptr) => {
-                let protect = hazard.protected(Ordering::Relaxed).unwrap().into_inner();
-                let hazard = self
-                    .take_hazard_and_protect(protect)
-                    .unwrap_or_else(|| acquire_hazard_for(protect));
-
-                self.inner = State::Protected(hazard, *ptr);
-            }
-            _ => self.release(),
-        };
     }
 
     #[inline]

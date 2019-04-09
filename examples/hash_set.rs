@@ -220,7 +220,7 @@ where
     fn next(&mut self) -> Option<Result<Shared<Node<T>>, IterErr>> {
         if let Some(curr) = self.guards.curr.shared() {
             let ptr = curr.into_marked_non_null();
-            let next = unsafe { &ptr.as_ref().next };
+            let next = unsafe { &(*ptr.decompose_ptr()).next };
             let unprotected = next.load_unprotected(Ordering::SeqCst);
 
             if self
