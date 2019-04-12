@@ -10,7 +10,7 @@ use super::*;
 #[test]
 fn empty_guarded() {
     let guard: Guarded<i32, U0> = Guarded::new();
-    assert_eq!(guard.inner, State::None);
+    assert_matches!(guard.inner, State::None);
     assert!(guard.shared().is_none());
 }
 

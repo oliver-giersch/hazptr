@@ -194,7 +194,7 @@ impl<T, N: Unsigned> Clone for Guarded<T, N> {
     }
 }
 
-impl<T, N: Unsigned> Protect for Guarded<T, N> {
+unsafe impl<T, N: Unsigned> Protect for Guarded<T, N> {
     type Item = T;
     type MarkBits = N;
     type Reclaimer = HP;
@@ -331,7 +331,7 @@ impl<T, N: Unsigned> Drop for Guarded<T, N> {
     }
 }
 
-#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Debug)]
 enum State<T, N: Unsigned> {
     Protected(HazardPtr, MarkedNonNull<T, N>),
     Scoped(HazardPtr),

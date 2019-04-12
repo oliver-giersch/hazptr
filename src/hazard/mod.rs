@@ -17,7 +17,6 @@
 //! retired record, it has to ensure that no hazard pointer in this list still protects the retired
 //! value.
 
-use std::cmp;
 use std::ops::Deref;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicPtr, Ordering};
@@ -40,25 +39,6 @@ const RESERVED: *mut () = 2 as *mut ();
 #[derive(Debug)]
 pub struct HazardPtr(&'static Hazard);
 
-impl PartialEq for HazardPtr {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 as *const _ == other.0 as *const _
-    }
-}
-
-impl PartialOrd for HazardPtr {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        (self.0 as *const Hazard).partial_cmp(&(other.0 as *const Hazard))
-    }
-}
-
-impl Eq for HazardPtr {}
-impl Ord for HazardPtr {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        (self.0 as *const Hazard).cmp(&(other.0 as *const Hazard))
-    }
-}
-
 impl Deref for HazardPtr {
     type Target = Hazard;
 
@@ -70,8 +50,8 @@ impl Deref for HazardPtr {
 
 impl From<&'static Hazard> for HazardPtr {
     #[inline]
-    fn from(pair: &'static Hazard) -> Self {
-        Self(pair)
+    fn from(hazard: &'static Hazard) -> Self {
+        Self(hazard)
     }
 }
 
