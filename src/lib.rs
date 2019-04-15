@@ -167,29 +167,25 @@ pub fn guarded<T, N: Unsigned>() -> impl Protect<Item = T, MarkBits = N, Reclaim
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// A guarded pointer that can be used to acquire hazard pointers.
-//#[derive(Debug)]
-/*pub struct Guarded<T, N: Unsigned> {
-    hazard: Option<(HazardPtr, MarkedNonNull<T, N>)>,
-}*/
-
 #[derive(Debug)]
 pub struct Guarded<T, N: Unsigned> {
-    inner: State<T, N>,
+    state: State<T, N>,
 }
 
 unsafe impl<T, N: Unsigned> Send for Guarded<T, N> {}
 
 impl<T, N: Unsigned> Clone for Guarded<T, N> {
+    #[inline]
     fn clone(&self) -> Self {
-        if let State::Protected(hazard, ptr) = &self.inner {
+        if let State::Protected(hazard, ptr) = &self.state {
             Self {
-                inner: State::Protected(
+                state: State::Protected(
                     acquire_hazard_for(hazard.protected(Ordering::Acquire).unwrap().into_inner()),
                     *ptr,
                 ),
             }
         } else {
-            Self { inner: State::None }
+            Self { state: State::None }
         }
     }
 }
@@ -206,7 +202,7 @@ unsafe impl<T, N: Unsigned> Protect for Guarded<T, N> {
 
     #[inline]
     fn shared(&self) -> Option<Shared<T, N>> {
-        match self.inner {
+        match self.state {
             State::Protected(_, ptr) => Some(unsafe { Shared::from_marked_non_null(ptr) }),
             _ => None,
         }
@@ -231,7 +227,7 @@ unsafe impl<T, N: Unsigned> Protect for Guarded<T, N> {
                 while let Some(ptr) = MarkedNonNull::new(atomic.load_raw(order)) {
                     let unmarked = ptr.decompose_non_null();
                     if protect == unmarked {
-                        self.inner = State::Protected(hazard, ptr);
+                        self.state = State::Protected(hazard, ptr);
 
                         // this is safe because `ptr` is now stored in a hazard pointer and matches
                         // the current value of `atomic`
@@ -269,7 +265,7 @@ unsafe impl<T, N: Unsigned> Protect for Guarded<T, N> {
                     return Err(NotEqual);
                 }
 
-                self.inner = State::Protected(hazard, ptr);
+                self.state = State::Protected(hazard, ptr);
 
                 // this is safe because `ptr` is now stored in a hazard pointer and matches
                 // the current value of `atomic`
@@ -286,7 +282,7 @@ unsafe impl<T, N: Unsigned> Protect for Guarded<T, N> {
 
     #[inline]
     fn release(&mut self) {
-        if let State::Protected(hazard, _) | State::Scoped(hazard) = self.inner.take() {
+        if let State::Protected(hazard, _) | State::Scoped(hazard) = self.state.take() {
             if cfg!(feature = "count-release") {
                 local::increase_ops_count();
             }
@@ -294,7 +290,7 @@ unsafe impl<T, N: Unsigned> Protect for Guarded<T, N> {
             // (LIB:3) this `Release` store synchronizes-with any `Acquire` load on the `protected`
             // field of the same hazard pointer
             hazard.set_scoped(Ordering::Release);
-            self.inner = State::Scoped(hazard)
+            self.state = State::Scoped(hazard)
         }
     }
 }
@@ -304,7 +300,7 @@ impl<T, N: Unsigned> Guarded<T, N> {
     /// and wraps it in a [`HazardPtr`](HazardPtr).
     #[inline]
     fn take_hazard_and_protect(&mut self, protect: NonNull<()>) -> Option<HazardPtr> {
-        match self.inner.take() {
+        match self.state.take() {
             State::Protected(hazard, _) | State::Scoped(hazard) => {
                 // this operation issues a full `SeqCst` memory fence
                 hazard.set_protected(protect);
@@ -318,7 +314,7 @@ impl<T, N: Unsigned> Guarded<T, N> {
 impl<T, N: Unsigned> Default for Guarded<T, N> {
     #[inline]
     fn default() -> Self {
-        Self { inner: State::None }
+        Self { state: State::None }
     }
 }
 
