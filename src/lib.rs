@@ -99,10 +99,10 @@
 //! [Owned]: Owned
 //! [compare_exchange]: reclaim::Atomic::compare_exchange
 
-#![cfg_attr(feature = "no-std", feature(alloc))]
-#![cfg_attr(feature = "no-std", no_std)]
+#![cfg_attr(not(feature = "std"), feature(alloc))]
+#![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(feature = "no-std")]
+#[cfg(not(feature = "std"))]
 extern crate alloc;
 
 pub use reclaim;
@@ -124,7 +124,7 @@ pub type Unlinked<T, N> = reclaim::Unlinked<T, HP, N>;
 /// could be reclaimed at any point.
 pub type Unprotected<T, N> = reclaim::Unprotected<T, HP, N>;
 
-#[cfg(not(feature = "no-std"))]
+#[cfg(feature = "std")]
 mod default;
 
 mod global;
@@ -135,18 +135,18 @@ mod retired;
 #[cfg(test)]
 mod tests;
 
-#[cfg(not(feature = "no-std"))]
+#[cfg(feature = "std")]
 pub use crate::default::guarded;
-#[cfg(not(feature = "no-std"))]
+#[cfg(feature = "std")]
 pub type Guarded<T, N> = crate::guarded::Guarded<T, crate::default::DefaultAccess, N>;
 
-#[cfg(feature = "no-std")]
+#[cfg(not(feature = "std"))]
 pub use crate::{
     global::Global,
     hazard::{Hazard, HazardPtr},
     local::{Local, LocalAccess, RecycleErr},
 };
-#[cfg(feature = "no-std")]
+#[cfg(not(feature = "std"))]
 pub type Guarded<'a, T, N> = crate::guarded::Guarded<T, &'a Local, N>;
 
 use crate::retired::Retired;

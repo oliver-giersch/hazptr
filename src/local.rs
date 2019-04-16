@@ -5,7 +5,7 @@ use core::mem::ManuallyDrop;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{self, Ordering};
 
-#[cfg(feature = "no-std")]
+#[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
 use arrayvec::ArrayVec;

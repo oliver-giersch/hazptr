@@ -11,7 +11,10 @@ keywords = ["hazard", "pointer", "concurrent", "reclamation", "lock-free"]
 edition = "2018"
 
 [features]
-no-std = ["reclaim/no-std"]
+default = ["std"]
+
+# disable for use in no_std crates (for limitations see README.md)
+std = ["arrayvec/std", "reclaim/std"]
 
 # reclamation threshold is based on count of hazard pointer releases
 count-release = []
@@ -21,13 +24,22 @@ maximum-reclamation-freq = []
 # attempt to reclaim records less often (less expensive)
 reduced-reclamation-freq = []
 
-[dependencies]
-reclaim = { git = "https://github.com/oliver-giersch/reclaim.git", branch = "master" }
-
 [dependencies.arrayvec]
 version = "0.4.10"
+default-features = false
+
+[dependencies.reclaim]
+git = "https://github.com/oliver-giersch/reclaim.git"
+branch = "master"
 default-features = false
 
 [dev-dependencies]
 assert_matches = "1.3.0"
 
+[[example]]
+name = "hash_set"
+required-features = ["std"]
+
+[[example]]
+name = "treiber"
+required-features = ["std"]

@@ -3,7 +3,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::{self, Ordering};
 
-#[cfg(feature = "no-std")]
+#[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
 use crate::hazard::{Hazard, HazardList, Protected};

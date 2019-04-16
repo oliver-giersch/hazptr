@@ -21,7 +21,7 @@ use core::mem;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-#[cfg(feature = "no-std")]
+#[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
