@@ -1,16 +1,18 @@
 [package]
 name = "hazptr"
+description = "hazard pointer based concurrent memory reclamation"
 version = "0.1.0"
 authors = ["Oliver Giersch"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/oliver-giersch/hazptr.git"
 documentation = "https://docs.rs/hazptr"
-description = "hazard pointer based concurrent memory reclamation"
 keywords = ["hazard", "pointer", "concurrent", "reclamation", "lock-free"]
 edition = "2018"
 
 [features]
+no-std = ["reclaim/no-std"]
+
 # reclamation threshold is based on count of hazard pointer releases
 count-release = []
 
@@ -20,8 +22,11 @@ maximum-reclamation-freq = []
 reduced-reclamation-freq = []
 
 [dependencies]
-arrayvec = "0.4.10"
 reclaim = { git = "https://github.com/oliver-giersch/reclaim.git", branch = "master" }
+
+[dependencies.arrayvec]
+version = "0.4.10"
+default-features = false
 
 [dev-dependencies]
 assert_matches = "1.3.0"

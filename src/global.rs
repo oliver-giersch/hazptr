@@ -1,63 +1,73 @@
 //! Operations on globally shared data for hazard pointers and abandoned retired records.
 
-use std::ptr::NonNull;
-use std::sync::atomic::{self, Ordering};
+use core::ptr::NonNull;
+use core::sync::atomic::{self, Ordering};
 
-use crate::hazard::{HazardList, HazardPtr, Protected};
+#[cfg(feature = "no-std")]
+use alloc::{boxed::Box, vec::Vec};
+
+use crate::hazard::{Hazard, HazardList, Protected};
 use crate::retired::{AbandonedBags, RetiredBag};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Global data structures
+// Global
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-static HAZARDS: HazardList = HazardList::new();
-static ABANDONED: AbandonedBags = AbandonedBags::new();
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Hazard list
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// Infallibly acquires a hazard pointer from the global list.
-///
-/// This either finds an already allocated one that is currently not in use **or** allocates a new
-/// hazard pointer and appends it to the list.
-#[inline]
-pub fn acquire_hazard_for(ptr: NonNull<()>) -> HazardPtr {
-    HazardPtr::from(HAZARDS.acquire_hazard_for(ptr))
+/// Global data structures required for managing memory reclamation with hazard pointers.
+pub struct Global {
+    hazards: HazardList,
+    abandoned: AbandonedBags,
 }
 
-/// Collects all currently active hazard pointers into the supplied `Vec`.
-#[inline]
-pub fn collect_protected_hazards(vec: &mut Vec<Protected>) {
-    vec.clear();
+impl Global {
+    /// Creates a new instance of a `Global`.
+    #[inline]
+    pub const fn new() -> Self {
+        Self {
+            hazards: HazardList::new(),
+            abandoned: AbandonedBags::new(),
+        }
+    }
 
-    // (GLO:1) this `SeqCst` fence establishes a total order with the `SeqCst` store in (HAZ:2) and
-    // the `SeqCst` CAS (LIS:3P)
-    // sequential consistency is required here in order to ensure that all stores to `protected` for
-    // all hazard pointers are totally ordered and thus visible when the hazard pointers are scanned
-    atomic::fence(Ordering::SeqCst);
+    /// Acquires a hazard pointer from the global list and sets it to protect the given pointer.
+    ///
+    /// This operation traverses the entire list from the head, trying to find an unused hazard.
+    /// If it does not find one, it allocates a new one and appends it to the end of the list.
+    #[inline]
+    pub(crate) fn acquire_hazard_for(&'static self, ptr: NonNull<()>) -> &'static Hazard {
+        self.hazards.acquire_hazard_for(ptr)
+    }
 
-    vec.extend(
-        HAZARDS
-            .iter()
-            .filter_map(|hazard| hazard.protected(Ordering::Relaxed)),
-    )
-}
+    /// Collects all currently active hazard pointers into the supplied `Vec`.
+    #[inline]
+    pub(crate) fn collect_protected_hazards(&'static self, vec: &mut Vec<Protected>) {
+        vec.clear();
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Abandoned record list
-////////////////////////////////////////////////////////////////////////////////////////////////////
+        // (GLO:1) this `SeqCst` fence establishes a total order with the `SeqCst` store in (HAZ:2)
+        // and the `SeqCst` CAS (LIS:3P)
+        // sequential consistency is required here in order to ensure that all stores to `protected`
+        // for all hazard pointers are totally ordered and thus visible when the hazard pointers are
+        // scanned
+        atomic::fence(Ordering::SeqCst);
 
-/// Abandons a thread's retired bag that still contains records, which could not be reclaimed at the
-/// time the thread exits.
-#[inline]
-pub fn abandon_retired_bag(bag: Box<RetiredBag>) {
-    debug_assert!(!bag.inner.is_empty());
-    ABANDONED.push(bag);
-}
+        vec.extend(
+            self.hazards
+                .iter()
+                .filter_map(|hazard| hazard.protected(Ordering::Relaxed)),
+        )
+    }
 
-/// Takes and merges all abandoned records and returns them as a single `RetiredBag`.
-#[inline]
-pub fn try_adopt_abandoned_records() -> Option<Box<RetiredBag>> {
-    ABANDONED.take_and_merge()
+    /// Stores an exiting thread's non-empty bag of retired records, which could not be reclaimed at
+    /// the time the thread exited.
+    #[inline]
+    pub(crate) fn abandon_retired_bag(&'static self, bag: Box<RetiredBag>) {
+        debug_assert!(!bag.inner.is_empty());
+        self.abandoned.push(bag);
+    }
+
+    /// Takes and merges all abandoned records and returns them as a single `RetiredBag`.
+    #[inline]
+    pub(crate) fn try_adopt_abandoned_records(&'static self) -> Option<Box<RetiredBag>> {
+        self.abandoned.take_and_merge()
+    }
 }

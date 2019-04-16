@@ -17,11 +17,11 @@
 //! retired record, it has to ensure that no hazard pointer in this list still protects the retired
 //! value.
 
-use std::ops::Deref;
-use std::ptr::NonNull;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use core::ops::Deref;
+use core::ptr::NonNull;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
-use crate::local;
+use crate::local::LocalAccess;
 
 mod list;
 
@@ -35,33 +35,41 @@ const RESERVED: *mut () = 2 as *mut ();
 // HazardPtr
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// An RAII wrapper for a global reference to a hazard pair.
+/// A wrapper for a global shared reference to a hazard that marks itself as reusable when
+/// it goes out of scope.
 #[derive(Debug)]
-pub struct HazardPtr(&'static Hazard);
+pub struct HazardPtr<L: LocalAccess> {
+    hazard: &'static Hazard,
+    local_access: L,
+}
 
-impl Deref for HazardPtr {
+impl<L: LocalAccess> HazardPtr<L> {
+    /// Creates a new hazard wrapper
+    #[inline]
+    pub fn new(hazard: &'static Hazard, local_access: L) -> Self {
+        Self {
+            hazard,
+            local_access,
+        }
+    }
+}
+
+impl<L: LocalAccess> Deref for HazardPtr<L> {
     type Target = Hazard;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.hazard
     }
 }
 
-impl From<&'static Hazard> for HazardPtr {
-    #[inline]
-    fn from(hazard: &'static Hazard) -> Self {
-        Self(hazard)
-    }
-}
-
-impl Drop for HazardPtr {
+impl<L: LocalAccess> Drop for HazardPtr<L> {
     #[inline]
     fn drop(&mut self) {
         // try to store the hazard in the thread local cache or mark is as globally available
-        if local::try_recycle_hazard(self.0).is_err() {
+        if L::try_recycle_hazard(self.local_access, self.hazard).is_err() {
             // (HAZ:1) this `Release` store synchronizes-with the `SeqCst` CAS (LIS:3P)
-            self.0.set_free(Ordering::Release);
+            self.hazard.set_free(Ordering::Release);
         }
     }
 }

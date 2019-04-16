@@ -17,9 +17,12 @@
 //! occasionally attempt to adopt such abandoned records, at which point it becomes the adopting
 //! thread's responsibility to reclaim these records.
 
-use std::mem;
-use std::ptr::{self, NonNull};
-use std::sync::atomic::{AtomicPtr, Ordering};
+use core::mem;
+use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicPtr, Ordering};
+
+#[cfg(feature = "no-std")]
+use alloc::{boxed::Box, vec::Vec};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // RetiredBag
@@ -69,10 +72,8 @@ impl RetiredBag {
 
 type Record<T> = reclaim::Record<T, crate::HP>;
 
-/// Fat pointer to a retired record that has not yet been reclaimed and deallocated
-pub struct Retired {
-    record: NonNull<dyn Any + 'static>,
-}
+/// Fat pointer to a retired record that has not yet been reclaimed and de-allocated
+pub struct Retired(Box<dyn Any + 'static>);
 
 impl Retired {
     /// Creates a new `Retired` record from a raw (unmarked) pointer of arbitrary type.
@@ -88,20 +89,13 @@ impl Retired {
         // lifetime transmuting is sound when no non-static references are accessed during drop
         let any: NonNull<dyn Any + 'a> = Record::get_record(record);
         let any: NonNull<dyn Any + 'static> = mem::transmute(any);
-        Self { record: any }
+        Self(Box::from_raw(any.as_ptr()))
     }
 
     /// Gets the memory address of the retired record.
     #[inline]
     pub fn address(&self) -> usize {
-        self.record.as_ptr() as *mut () as usize
-    }
-}
-
-impl Drop for Retired {
-    #[inline]
-    fn drop(&mut self) {
-        mem::drop(unsafe { Box::from_raw(self.record.as_ptr()) });
+        &*self.0 as *const _ as *mut () as usize
     }
 }
 

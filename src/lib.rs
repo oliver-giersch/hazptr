@@ -43,7 +43,7 @@
 //! Only values that are successfully unlinked in this manner can be retired, which means they will
 //! be automatically reclaimed at some some point when it is safe to do so.
 //! [`Unprotected`][Unprotected] is useful for comparing and storing values, which do not need to be
-//! dereferenced and hence don't need to be protected by hazard pointers.
+//! de-referenced and hence don't need to be protected by hazard pointers.
 //!
 //! # Compare-and-Swap
 //!
@@ -99,37 +99,56 @@
 //! [Owned]: Owned
 //! [compare_exchange]: reclaim::Atomic::compare_exchange
 
-use std::mem;
-use std::ptr::NonNull;
-use std::sync::atomic::Ordering;
+#![cfg_attr(feature = "no-std", feature(alloc))]
+#![cfg_attr(feature = "no-std", no_std)]
+
+#[cfg(feature = "no-std")]
+extern crate alloc;
 
 pub use reclaim;
 pub use reclaim::typenum;
 
-use reclaim::{AcquireResult, MarkedNonNull, MarkedPointer, MarkedPtr, NotEqual, Protect, Reclaim};
+use reclaim::LocalReclaim;
 use typenum::Unsigned;
 
 /// Atomic pointer that must be either `null` or valid. Loads of non-null values must acquire hazard
 /// pointers and are hence protected from reclamation.
-pub type Atomic<T, N> = reclaim::Atomic<T, N, HP>;
+pub type Atomic<T, N> = reclaim::Atomic<T, HP, N>;
 /// Shared reference to a value loaded from shared memory that is protected by a hazard pointer.
-pub type Shared<'g, T, N> = reclaim::Shared<'g, T, N, HP>;
+pub type Shared<'g, T, N> = reclaim::Shared<'g, T, HP, N>;
 /// A pointer type for heap allocation like [`Box`](std::boxed::Box) that can be marked.
-pub type Owned<T, N> = reclaim::Owned<T, N, HP>;
+pub type Owned<T, N> = reclaim::Owned<T, HP, N>;
 /// Unique reference to a value that has been successfully unlinked and can be retired.
-pub type Unlinked<T, N> = reclaim::Unlinked<T, N, HP>;
+pub type Unlinked<T, N> = reclaim::Unlinked<T, HP, N>;
 /// Shared reference to a value loaded from shared memory that is **not** safe to dereference and
 /// could be reclaimed at any point.
-pub type Unprotected<T, N> = reclaim::Unprotected<T, N, HP>;
+pub type Unprotected<T, N> = reclaim::Unprotected<T, HP, N>;
+
+#[cfg(not(feature = "no-std"))]
+mod default;
 
 mod global;
+mod guarded;
 mod hazard;
 mod local;
 mod retired;
 #[cfg(test)]
 mod tests;
 
-use crate::hazard::HazardPtr;
+#[cfg(not(feature = "no-std"))]
+pub use crate::default::guarded;
+#[cfg(not(feature = "no-std"))]
+pub type Guarded<T, N> = crate::guarded::Guarded<T, crate::default::DefaultAccess, N>;
+
+#[cfg(feature = "no-std")]
+pub use crate::{
+    global::Global,
+    hazard::{Hazard, HazardPtr},
+    local::{Local, LocalAccess, RecycleErr},
+};
+#[cfg(feature = "no-std")]
+pub type Guarded<'a, T, N> = crate::guarded::Guarded<T, &'a Local, N>;
+
 use crate::retired::Retired;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -140,217 +159,22 @@ use crate::retired::Retired;
 #[derive(Debug, Default, Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub struct HP;
 
-unsafe impl Reclaim for HP {
+unsafe impl LocalReclaim for HP {
+    type Local = crate::local::Local;
     // hazard pointers do not require any extra information per each allocated record
     type RecordHeader = ();
 
     #[inline]
-    unsafe fn retire<T: 'static, N: Unsigned>(unlinked: Unlinked<T, N>) {
-        Self::retire_unchecked(unlinked)
+    unsafe fn retire_local<T: 'static, N: Unsigned>(local: &Self::Local, unlinked: Unlinked<T, N>) {
+        Self::retire_local_unchecked(local, unlinked)
     }
 
     #[inline]
-    unsafe fn retire_unchecked<T, N: Unsigned>(unlinked: Unlinked<T, N>) {
+    unsafe fn retire_local_unchecked<T, N: Unsigned>(
+        local: &Self::Local,
+        unlinked: Unlinked<T, N>,
+    ) {
         let unmarked = Unlinked::into_marked_non_null(unlinked).decompose_non_null();
-        local::retire_record(Retired::new_unchecked(unmarked));
+        local.retire_record(Retired::new_unchecked(unmarked));
     }
-}
-
-/// Creates a new (empty) guarded pointer that can be used to acquire hazard pointers.
-#[inline]
-pub fn guarded<T, N: Unsigned>() -> impl Protect<Item = T, MarkBits = N, Reclaimer = HP> {
-    Guarded::new()
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Guarded
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// A guarded pointer that can be used to acquire hazard pointers.
-#[derive(Debug)]
-pub struct Guarded<T, N: Unsigned> {
-    state: State<T, N>,
-}
-
-unsafe impl<T, N: Unsigned> Send for Guarded<T, N> {}
-
-impl<T, N: Unsigned> Clone for Guarded<T, N> {
-    #[inline]
-    fn clone(&self) -> Self {
-        if let State::Protected(hazard, ptr) = &self.state {
-            Self {
-                state: State::Protected(
-                    acquire_hazard_for(hazard.protected(Ordering::Acquire).unwrap().into_inner()),
-                    *ptr,
-                ),
-            }
-        } else {
-            Self { state: State::None }
-        }
-    }
-}
-
-unsafe impl<T, N: Unsigned> Protect for Guarded<T, N> {
-    type Item = T;
-    type MarkBits = N;
-    type Reclaimer = HP;
-
-    #[inline]
-    fn new() -> Self {
-        Self::default()
-    }
-
-    #[inline]
-    fn shared(&self) -> Option<Shared<T, N>> {
-        match self.state {
-            State::Protected(_, ptr) => Some(unsafe { Shared::from_marked_non_null(ptr) }),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    fn acquire(&mut self, atomic: &Atomic<T, N>, order: Ordering) -> Option<Shared<T, N>> {
-        match MarkedNonNull::new(atomic.load_raw(Ordering::Relaxed)) {
-            None => {
-                self.release();
-                None
-            }
-            Some(ptr) => {
-                let mut protect = ptr.decompose_non_null();
-                let hazard = self
-                    .take_hazard_and_protect(protect.cast())
-                    .unwrap_or_else(|| acquire_hazard_for(protect.cast()));
-
-                // the initially taken snapshot is now stored in the hazard pointer, but the value
-                // stored in `atomic` may have changed already
-                // (LIB:2) this load has to synchronize with any potential store to `atomic`
-                while let Some(ptr) = MarkedNonNull::new(atomic.load_raw(order)) {
-                    let unmarked = ptr.decompose_non_null();
-                    if protect == unmarked {
-                        self.state = State::Protected(hazard, ptr);
-
-                        // this is safe because `ptr` is now stored in a hazard pointer and matches
-                        // the current value of `atomic`
-                        return Some(unsafe { Shared::from_marked_non_null(ptr) });
-                    }
-
-                    // this operation issues a full `SeqCst` memory fence
-                    hazard.set_protected(unmarked.cast());
-                    protect = unmarked;
-                }
-
-                None
-            }
-        }
-    }
-
-    #[inline]
-    fn acquire_if_equal(
-        &mut self,
-        atomic: &Atomic<T, N>,
-        expected: MarkedPtr<T, N>,
-        order: Ordering,
-    ) -> AcquireResult<T, N, Self::Reclaimer> {
-        match MarkedNonNull::new(atomic.load_raw(Ordering::Relaxed)) {
-            // values of `atomic` and `compare` are non-null and equal
-            Some(ptr) if ptr == expected => {
-                let unmarked = ptr.decompose_non_null();
-                let hazard = self
-                    .take_hazard_and_protect(unmarked.cast())
-                    .unwrap_or_else(|| acquire_hazard_for(unmarked.cast()));
-
-                // (LIB:2) this load operation should synchronize-with any store operation to the
-                // same `atomic`
-                if atomic.load_raw(order) != ptr {
-                    return Err(NotEqual);
-                }
-
-                self.state = State::Protected(hazard, ptr);
-
-                // this is safe because `ptr` is now stored in a hazard pointer and matches
-                // the current value of `atomic`
-                Ok(Some(unsafe { Shared::from_marked_non_null(ptr) }))
-            }
-            // values of `atomic` and `compare` are both null
-            None if expected.is_null() => {
-                self.release();
-                Ok(None)
-            }
-            _ => Err(NotEqual),
-        }
-    }
-
-    #[inline]
-    fn release(&mut self) {
-        if let State::Protected(hazard, _) | State::Scoped(hazard) = self.state.take() {
-            if cfg!(feature = "count-release") {
-                local::increase_ops_count();
-            }
-
-            // (LIB:3) this `Release` store synchronizes-with any `Acquire` load on the `protected`
-            // field of the same hazard pointer
-            hazard.set_scoped(Ordering::Release);
-            self.state = State::Scoped(hazard)
-        }
-    }
-}
-
-impl<T, N: Unsigned> Guarded<T, N> {
-    /// Takes the internally stored hazard pointer, sets it to protect the given pointer (`protect`)
-    /// and wraps it in a [`HazardPtr`](HazardPtr).
-    #[inline]
-    fn take_hazard_and_protect(&mut self, protect: NonNull<()>) -> Option<HazardPtr> {
-        match self.state.take() {
-            State::Protected(hazard, _) | State::Scoped(hazard) => {
-                // this operation issues a full `SeqCst` memory fence
-                hazard.set_protected(protect);
-                Some(hazard)
-            }
-            _ => None,
-        }
-    }
-}
-
-impl<T, N: Unsigned> Default for Guarded<T, N> {
-    #[inline]
-    fn default() -> Self {
-        Self { state: State::None }
-    }
-}
-
-impl<T, N: Unsigned> Drop for Guarded<T, N> {
-    #[inline]
-    fn drop(&mut self) {
-        if cfg!(feature = "count-release") {
-            local::increase_ops_count();
-        }
-    }
-}
-
-#[derive(Debug)]
-enum State<T, N: Unsigned> {
-    Protected(HazardPtr, MarkedNonNull<T, N>),
-    Scoped(HazardPtr),
-    None,
-}
-
-impl<T, N: Unsigned> State<T, N> {
-    #[inline]
-    fn take(&mut self) -> Self {
-        mem::replace(self, State::None)
-    }
-}
-
-/// Attempts to take a reserved hazard from the thread-local cache or infallibly acquires one from
-/// the global list.
-#[inline]
-fn acquire_hazard_for(protect: NonNull<()>) -> HazardPtr {
-    if let Some(handle) = local::acquire_hazard() {
-        // this operation issues a full `SeqCst` memory fence
-        handle.set_protected(protect);
-
-        return handle;
-    }
-
-    global::acquire_hazard_for(protect)
 }

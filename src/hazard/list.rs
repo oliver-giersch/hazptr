@@ -1,13 +1,16 @@
 //! Concurrent linked list implementation for globally storing all allocated hazard pointers.
 //!
 //! A thread requesting a hazard pointer first traverses this list and searches for an already
-//! allocated one that is not currently in use. If there is none, the list allocates a new one,
-//! appends it to the end of the list and returns a reference (`&'static Hazard`) to it.
-//! Once allocated, hazard pointers are never deallocated again during the lifetime of the program
-//! (i.e. they have `'static` lifetime). When a thread does no longer need an acquired hazard
-//! pointer, marks it as no longer in use, which allows other threads to acquire it during the list
-//! traversal instead of allocating a new one. Additionally, each thread maintains a small cache of
-//! previously acquired hazard pointers, which are specifically reserved for use by that thread.
+//! allocated one that is not currently in use.
+//! If there is none, the list allocates a new one, appends it to the end of the list and returns a
+//! reference (`&'static Hazard`) to it.
+//! Once allocated, hazard pointers are never de-allocated again during the lifetime of the program
+//! (i.e. they have `'static` lifetime).
+//! When a thread does no longer need an acquired hazard pointer, marks it as no longer in use,
+//! which allows other threads to acquire it during the list traversal instead of having to
+//! allocate a new one.
+//! Additionally, each thread maintains a small cache of previously acquired hazard pointers, which
+//! are specifically reserved for use by that thread.
 //!
 //! # Synchronization
 //!
@@ -41,10 +44,13 @@
 //! outcome is a record not being reclaimed that would actually be a valid candidate for
 //! reclamation.
 
-use std::iter::FusedIterator;
-use std::mem;
-use std::ptr::{self, NonNull};
-use std::sync::atomic::{AtomicPtr, Ordering};
+use core::iter::FusedIterator;
+use core::mem;
+use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicPtr, Ordering};
+
+#[cfg(feature = "no-std")]
+use alloc::boxed::Box;
 
 use reclaim::align::CachePadded;
 
