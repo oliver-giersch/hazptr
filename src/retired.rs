@@ -124,8 +124,7 @@ impl AbandonedBags {
 
         loop {
             let head = self.head.load(Ordering::Relaxed);
-            // this is safe because all nodes are backed by valid leaked allocations (Box)
-            leaked.next = unsafe { head.as_mut().map(NonNull::from) };
+            leaked.next = NonNull::new(head);
 
             // (RET:1) this `Release` CAS synchronizes-with the `Acquire` swap in (RET:2)
             if self
@@ -138,7 +137,7 @@ impl AbandonedBags {
         }
     }
 
-    /// Takes the entire contents of the queue and merges the retired records of all retired bags
+    /// Takes the entire content of the queue and merges the retired records of all retired bags
     /// into one.
     #[inline]
     pub fn take_and_merge(&self) -> Option<Box<RetiredBag>> {
@@ -148,8 +147,8 @@ impl AbandonedBags {
         }
 
         // (RET:2) this `Acquire` swap synchronizes-with the `Release` CAS in (RET:1)
-        let queue = unsafe { self.head.swap(ptr::null_mut(), Ordering::Acquire).as_mut() };
-        queue.map(|bag| {
+        let queue = self.head.swap(ptr::null_mut(), Ordering::Acquire);
+        unsafe { queue.as_mut() }.map(|bag| {
             let mut boxed = unsafe { Box::from_raw(bag) };
 
             let mut curr = boxed.next;
