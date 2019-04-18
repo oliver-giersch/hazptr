@@ -67,7 +67,7 @@ impl<L: LocalAccess> Drop for HazardPtr<L> {
     #[inline]
     fn drop(&mut self) {
         // try to store the hazard in the thread local cache or mark is as globally available
-        if L::try_recycle_hazard(self.local_access, self.hazard).is_err() {
+        if self.local_access.try_recycle_hazard(self.hazard).is_err() {
             // (HAZ:1) this `Release` store synchronizes-with the `SeqCst` CAS (LIS:3P)
             self.hazard.set_free(Ordering::Release);
         }
@@ -107,12 +107,14 @@ impl Hazard {
     #[inline]
     pub fn protected(&self, order: Ordering) -> Option<Protected> {
         match self.protected.load(order) {
-            FREE | RESERVED => None,
+            FREE | SCOPED | RESERVED => None,
             ptr => Some(Protected(unsafe { NonNull::new_unchecked(ptr) })),
         }
     }
 
     /// Marks the hazard as actively protecting the given pointer.
+    ///
+    /// This operation issues a full memory fence.
     #[inline]
     pub fn set_protected(&self, protect: NonNull<()>) {
         // (HAZ:2) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1) and establishes

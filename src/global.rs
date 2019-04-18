@@ -14,6 +14,7 @@ use crate::retired::{AbandonedBags, RetiredBag};
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Global data structures required for managing memory reclamation with hazard pointers.
+#[derive(Debug)]
 pub struct Global {
     hazards: HazardList,
     abandoned: AbandonedBags,
@@ -34,8 +35,8 @@ impl Global {
     /// This operation traverses the entire list from the head, trying to find an unused hazard.
     /// If it does not find one, it allocates a new one and appends it to the end of the list.
     #[inline]
-    pub(crate) fn acquire_hazard_for(&'static self, ptr: NonNull<()>) -> &'static Hazard {
-        self.hazards.acquire_hazard_for(ptr)
+    pub(crate) fn get_hazard(&'static self, ptr: NonNull<()>) -> &'static Hazard {
+        self.hazards.get_hazard(ptr)
     }
 
     /// Collects all currently active hazard pointers into the supplied `Vec`.
@@ -61,7 +62,6 @@ impl Global {
     /// the time the thread exited.
     #[inline]
     pub(crate) fn abandon_retired_bag(&'static self, bag: Box<RetiredBag>) {
-        debug_assert!(!bag.inner.is_empty());
         self.abandoned.push(bag);
     }
 

@@ -17,6 +17,7 @@
 //! occasionally attempt to adopt such abandoned records, at which point it becomes the adopting
 //! thread's responsibility to reclaim these records.
 
+use core::fmt;
 use core::mem;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
@@ -33,6 +34,7 @@ use alloc::{boxed::Box, vec::Vec};
 /// This type also functions as potential list node for the global list of abandoned bags.
 /// The internal cache uses a `Vec`, which will have to be reallocated if too many retired records
 /// are cached at any time.
+#[derive(Debug)]
 pub struct RetiredBag {
     pub inner: Vec<Retired>,
     next: Option<NonNull<RetiredBag>>,
@@ -99,11 +101,21 @@ impl Retired {
     }
 }
 
+impl fmt::Debug for Retired {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Retired")
+            .field("address", &(self.address() as *const ()))
+            .finish()
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // AbandonedBags
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Concurrent queue containing all retired bags abandoned by exited threads
+#[derive(Debug)]
 pub struct AbandonedBags {
     head: AtomicPtr<RetiredBag>,
 }
@@ -147,8 +159,8 @@ impl AbandonedBags {
         }
 
         // (RET:2) this `Acquire` swap synchronizes-with the `Release` CAS in (RET:1)
-        let queue = self.head.swap(ptr::null_mut(), Ordering::Acquire);
-        unsafe { queue.as_mut() }.map(|bag| {
+        let queue = unsafe { self.head.swap(ptr::null_mut(), Ordering::Acquire).as_mut() };
+        queue.map(|bag| {
             let mut boxed = unsafe { Box::from_raw(bag) };
 
             let mut curr = boxed.next;

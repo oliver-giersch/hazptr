@@ -23,7 +23,7 @@ hazptr = "0.1"
 
 ## Minimum Supported Rust Version (MSRV)
 
-The minimum supported rust version for this crate is 1.36.0
+The minimum supported rust version for this crate is 1.35.0
 
 ## Comparison with [crossbeam-epoch](https://crates.io/crates/crossbeam-epoch)
 

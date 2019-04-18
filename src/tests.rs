@@ -110,7 +110,7 @@ fn abandon_on_panic() {
     // thread 2 has panicked and abandoned two retired records
     thread2.join().unwrap_err();
     // adopt records before thread 1 exits and adopts them
-    let abandoned = crate::default::GLOBAL
+    let abandoned = crate::default::global()
         .try_adopt_abandoned_records()
         .unwrap();
     barrier2.wait();

@@ -34,7 +34,7 @@ branch = "master"
 default-features = false
 
 [dev-dependencies]
-assert_matches = "1.3.0"
+matches = "0.1.8"
 
 [[example]]
 name = "hash_set"

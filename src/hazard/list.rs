@@ -88,7 +88,7 @@ impl HazardList {
     /// Acquires an already inserted and inactive hazard pointer or allocates a new one at the tail
     /// and returns a reference to it.
     #[inline]
-    pub fn acquire_hazard_for(&self, protect: NonNull<()>) -> &Hazard {
+    pub fn get_hazard(&self, protect: NonNull<()>) -> &Hazard {
         let mut prev = &self.head;
         // (LIS:2) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
         let mut curr = self.head.load(Ordering::Acquire);
@@ -199,7 +199,7 @@ mod tests {
         let ptr = NonNull::new(0xDEAD_BEEF as *mut ()).unwrap();
 
         let list = HazardList::new();
-        let hazard = list.acquire_hazard_for(ptr);
+        let hazard = list.get_hazard(ptr);
         assert_eq!(
             hazard.protected.load(Ordering::Relaxed),
             0xDEAD_BEEF as *mut ()
@@ -211,9 +211,9 @@ mod tests {
         let ptr = NonNull::new(0xDEAD_BEEF as *mut ()).unwrap();
 
         let list = HazardList::new();
-        let _ = list.acquire_hazard_for(ptr);
-        let _ = list.acquire_hazard_for(ptr);
-        let _ = list.acquire_hazard_for(ptr);
+        let _ = list.get_hazard(ptr);
+        let _ = list.get_hazard(ptr);
+        let _ = list.get_hazard(ptr);
 
         assert!(list
             .iter()

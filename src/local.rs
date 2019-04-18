@@ -8,7 +8,7 @@ use core::sync::atomic::{self, Ordering};
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
-use arrayvec::ArrayVec;
+use arrayvec::{ArrayVec, CapacityError};
 
 use crate::global::Global;
 use crate::hazard::{Hazard, HazardPtr, Protected};
@@ -32,6 +32,7 @@ const HAZARD_CACHE: usize = 16;
 const SCAN_CACHE: usize = 128;
 
 /// Container for all thread local data required for reclamation with hazard pointers.
+#[derive(Debug)]
 pub struct Local(UnsafeCell<LocalInner>);
 
 impl Local {
@@ -52,7 +53,7 @@ impl Local {
 
     /// Attempts to take a reserved hazard from the thread local cache if there are any.
     #[inline]
-    pub(crate) fn acquire_hazard_for(&self, protect: NonNull<()>) -> &'static Hazard {
+    pub(crate) fn get_hazard(&self, protect: NonNull<()>) -> &'static Hazard {
         let local = unsafe { &mut *self.0.get() };
         if let Some(hazard) = local.hazard_cache.pop() {
             // this operation issues a full `SeqCst` memory fence
@@ -60,7 +61,7 @@ impl Local {
 
             hazard
         } else {
-            local.global.acquire_hazard_for(protect)
+            local.global.get_hazard(protect)
         }
     }
 
@@ -68,18 +69,17 @@ impl Local {
     ///
     /// # Errors
     ///
-    /// The recycle can fail if the thread local hazard cache is at capacity.
+    /// The operation can fail if the thread local hazard cache is at maximum capacity.
     #[inline]
     pub(crate) fn try_recycle_hazard(&self, hazard: &'static Hazard) -> Result<(), RecycleErr> {
-        match unsafe { &mut *self.0.get() }.hazard_cache.try_push(hazard) {
-            Ok(_) => {
-                // (LOC:1) this `Release` store synchronizes-with any `Acquire` load on the
-                // `protected` field of the same hazard pointer
-                hazard.set_reserved(Ordering::Release);
-                Ok(())
-            }
-            Err(_) => Err(RecycleErr::Capacity),
-        }
+        unsafe { &mut *self.0.get() }
+            .hazard_cache
+            .try_push(hazard)?;
+
+        // (LOC:1) this `Release` store synchronizes-with any `Acquire` load on the
+        // `protected` field of the same hazard pointer
+        hazard.set_reserved(Ordering::Release);
+        Ok(())
     }
 
     /// Retires a record and increases the operations count.
@@ -112,6 +112,7 @@ impl Local {
 // LocalInner
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug)]
 struct LocalInner {
     global: &'static Global,
     ops_count: u32,
@@ -188,11 +189,10 @@ impl Drop for LocalInner {
 /// A trait for abstracting over different means of accessing thread local state
 pub trait LocalAccess
 where
-    Self: Copy + Sized,
+    Self: Clone + Copy + Sized,
 {
-    /// Acquires a hazard either from thread local storage or globally and wraps it in a
-    /// [`HazardPtr`](crate::hazard::HazardPtr).
-    fn acquire_hazard_for(access: Self, protect: NonNull<()>) -> HazardPtr<Self>;
+    /// Gets and Wraps a hazard in a [`HazardPtr`](crate::hazard::HazardPtr).
+    fn wrap_hazard(self, protect: NonNull<()>) -> HazardPtr<Self>;
 
     /// Attempts to recycle `hazard` in the thread local cache for hazards reserved for the current
     /// thread.
@@ -203,27 +203,27 @@ where
     ///
     /// - the thread local cache is at capacity ([`RecycleErr::Capacity`](RecycleErr::Capacity))
     /// - access to the thread local state fails ([`RecycleErr::Access`](RecycleErr::Access))
-    fn try_recycle_hazard(access: Self, hazard: &'static Hazard) -> Result<(), RecycleErr>;
+    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleErr>;
 
     /// Increase the internal count of a threads operations counting towards the threshold for
     /// initiating a new attempt for reclaiming all retired records.
-    fn increase_ops_count(access: Self);
+    fn increase_ops_count(self);
 }
 
 impl<'a> LocalAccess for &'a Local {
     #[inline]
-    fn acquire_hazard_for(access: Self, protect: NonNull<()>) -> HazardPtr<Self> {
-        HazardPtr::new(access.acquire_hazard_for(protect), access)
+    fn wrap_hazard(self, protect: NonNull<()>) -> HazardPtr<Self> {
+        HazardPtr::new(Local::get_hazard(self, protect), self)
     }
 
     #[inline]
-    fn try_recycle_hazard(access: Self, hazard: &'static Hazard) -> Result<(), RecycleErr> {
-        access.try_recycle_hazard(hazard)
+    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleErr> {
+        Local::try_recycle_hazard(self, hazard)
     }
 
     #[inline]
-    fn increase_ops_count(access: Self) {
-        access.increase_ops_count();
+    fn increase_ops_count(self) {
+        Local::increase_ops_count(self);
     }
 }
 
@@ -238,17 +238,26 @@ pub enum RecycleErr {
     Capacity,
 }
 
+impl From<CapacityError<&'static Hazard>> for RecycleErr {
+    #[inline]
+    fn from(_: CapacityError<&'static Hazard>) -> Self {
+        RecycleErr::Capacity
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    /*use std::mem;
+    use std::mem;
     use std::ptr::NonNull;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::thread;
 
-    use crate::acquire_hazard_for;
+    use crate::global::Global;
+    use crate::hazard::HazardPtr;
     use crate::retired::Retired;
 
-    use super::*;
+    use super::{Local, HAZARD_CACHE, SCAN_CACHE, SCAN_THRESHOLD};
+
+    static GLOBAL: Global = Global::new();
 
     struct DropCount<'a>(&'a AtomicUsize);
     impl Drop for DropCount<'_> {
@@ -259,73 +268,88 @@ mod tests {
 
     #[test]
     fn acquire_local() {
-        assert!(acquire_hazard().is_none());
-        let ptr = NonNull::from(&1);
+        let local = Local::new(&GLOBAL);
+        let ptr = NonNull::from(&());
 
-        let _hazards: Box<[HazardPtr]> = (0..HAZARD_CACHE)
-            .map(|_| acquire_hazard_for(ptr.cast()))
+        let hazards: Box<[_]> = (0..HAZARD_CACHE)
+            .map(|_| local.get_hazard(ptr.cast()))
+            .map(|hazard| HazardPtr::new(hazard, &local))
             .collect();
-        mem::drop(_hazards);
+        mem::drop(hazards);
 
-        // thread local hazard cache is full
-        LOCAL.with(|cell| {
-            let local = unsafe { &*cell.get() };
-            assert_eq!(0, local.ops_count);
-            assert_eq!(HAZARD_CACHE, local.hazard_cache.len());
-            assert_eq!(SCAN_CACHE, local.scan_cache.capacity());
-            assert_eq!(0, local.scan_cache.len());
-        });
+        {
+            // local hazard cache is full
+            let inner = unsafe { &*local.0.get() };
+            assert_eq!(0, inner.ops_count);
+            assert_eq!(HAZARD_CACHE, inner.hazard_cache.len());
+            assert_eq!(SCAN_CACHE, inner.scan_cache.capacity());
+            assert_eq!(0, inner.scan_cache.len());
+        }
 
-        let _hazards: Box<[HazardPtr]> = (0..HAZARD_CACHE)
-            .map(|_| acquire_hazard_for(ptr.cast()))
+        let _hazards: Box<[_]> = (0..HAZARD_CACHE)
+            .map(|_| local.get_hazard(ptr.cast()))
+            .map(|hazard| HazardPtr::new(hazard, &local))
             .collect();
 
-        // thread local hazard cache is empty
-        LOCAL.with(|cell| {
-            let local = unsafe { &*cell.get() };
-            assert_eq!(0, local.ops_count);
-            assert_eq!(0, local.hazard_cache.len());
-            assert_eq!(SCAN_CACHE, local.scan_cache.capacity());
-            assert_eq!(0, local.scan_cache.len());
-        });
+        {
+            // local hazard cache is empty
+            let inner = unsafe { &*local.0.get() };
+            assert_eq!(0, inner.ops_count);
+            assert_eq!(0, inner.hazard_cache.len());
+            assert_eq!(SCAN_CACHE, inner.scan_cache.capacity());
+            assert_eq!(0, inner.scan_cache.len());
+        }
     }
 
     #[test]
     fn retire() {
         const THRESHOLD: usize = SCAN_THRESHOLD as usize;
 
+        let local = Local::new(&GLOBAL);
         let count = AtomicUsize::new(0);
 
-        // retire THRESHOLD - 1 records
-        for _ in 0..THRESHOLD - 1 {
-            let retired = unsafe {
-                Retired::new_unchecked(NonNull::from(Box::leak(Box::new(DropCount(&count)))))
-            };
-            retire_record(retired);
+        // allocate & retire (THRESHOLD - 1) records
+        (0..THRESHOLD - 1)
+            .map(|_| Box::new(DropCount(&count)))
+            .map(|record| unsafe { Retired::new_unchecked(NonNull::from(Box::leak(record))) })
+            .for_each(|retired| local.retire_record(retired));
+
+        {
+            let inner = unsafe { &*local.0.get() };
+            assert_eq!(THRESHOLD - 1, inner.ops_count as usize);
+            assert_eq!(THRESHOLD - 1, inner.retired_bag.inner.len());
         }
 
-        LOCAL.with(|cell| {
-            let local = unsafe { &*cell.get() };
-            assert_eq!(THRESHOLD - 1, local.ops_count as usize);
-            assert_eq!(THRESHOLD - 1, local.retired_bag.inner.len());
-        });
-
+        // nothing has been dropped so far
         assert_eq!(0, count.load(Ordering::Relaxed));
 
-        // retire another record, trigger scan which deallocates records
-        let retired = unsafe {
+        // retire another record, triggering a scan which deallocates all records
+        local.retire_record(unsafe {
             Retired::new_unchecked(NonNull::from(Box::leak(Box::new(DropCount(&count)))))
-        };
-        retire_record(retired);
-
-        LOCAL.with(|cell| {
-            let local = unsafe { &*cell.get() };
-            assert_eq!(0, local.ops_count as usize);
-            assert_eq!(0, local.retired_bag.inner.len());
         });
+
+        {
+            let inner = unsafe { &*local.0.get() };
+            assert_eq!(0, inner.ops_count as usize);
+            assert_eq!(0, inner.retired_bag.inner.len());
+        }
 
         assert_eq!(THRESHOLD, count.load(Ordering::Relaxed));
     }
+
+    /*use std::mem;
+    use std::ptr::NonNull;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::thread;
+
+    use crate::acquire_hazard_for;
+    use crate::retired::Retired;
+
+    use super::*;
+
+
+
+
 
     #[test]
     fn drop() {

@@ -9,7 +9,7 @@ use crate::local::{Local, LocalAccess, RecycleErr};
 use crate::{Guarded, Unlinked, HP};
 
 /// The single static `Global` instance
-pub(crate) static GLOBAL: Global = Global::new();
+static GLOBAL: Global = Global::new();
 
 // Per-thread instances of `Local`
 thread_local!(static LOCAL: Local = Local::new(&GLOBAL));
@@ -37,26 +37,36 @@ pub struct DefaultAccess;
 
 impl LocalAccess for DefaultAccess {
     #[inline]
-    fn acquire_hazard_for(_: Self, protect: NonNull<()>) -> HazardPtr<Self> {
-        LOCAL.with(|local| HazardPtr::new(local.acquire_hazard_for(protect), DefaultAccess))
+    fn wrap_hazard(self, protect: NonNull<()>) -> HazardPtr<Self> {
+        LOCAL.with(|local| HazardPtr::new(Local::get_hazard(local, protect), DefaultAccess))
     }
 
     #[inline]
-    fn try_recycle_hazard(_: Self, hazard: &'static Hazard) -> Result<(), RecycleErr> {
+    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleErr> {
         LOCAL
-            .try_with(|local| local.try_recycle_hazard(hazard))
+            .try_with(|local| Local::try_recycle_hazard(local, hazard))
             .or(Err(RecycleErr::Access))
             .and(Ok(()))
     }
 
     #[inline]
-    fn increase_ops_count(_: Self) {
+    fn increase_ops_count(self) {
         LOCAL.with(Local::increase_ops_count);
     }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Testing related free functions
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[cfg(test)]
+#[inline]
+pub(crate) fn global() -> &'static Global {
+    &GLOBAL
 }
 
 #[cfg(test)]
 #[inline]
 pub(crate) fn cached_hazards_count() -> usize {
-    LOCAL.with(|local| local.cached_hazards_count())
+    LOCAL.with(Local::cached_hazards_count)
 }

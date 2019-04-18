@@ -26,21 +26,14 @@ impl<T, L: LocalAccess, N: Unsigned> Clone for Guarded<T, L, N> {
     #[inline]
     fn clone(&self) -> Self {
         if let State::Protected(hazard, ptr) = &self.state {
+            // (GUA:1) this `Acquire` load ...
+            let protect = hazard.protected(Ordering::Acquire).unwrap().into_inner();
             Self {
-                state: State::Protected(
-                    L::acquire_hazard_for(
-                        self.local_access,
-                        hazard.protected(Ordering::Acquire).unwrap().into_inner(),
-                    ),
-                    *ptr,
-                ),
+                state: State::Protected(self.local_access.wrap_hazard(protect), *ptr),
                 local_access: self.local_access,
             }
         } else {
-            Self {
-                state: State::None,
-                local_access: self.local_access,
-            }
+            Self::new(self.local_access)
         }
     }
 }
@@ -69,11 +62,11 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
                 let mut protect = ptr.decompose_non_null();
                 let hazard = self
                     .take_hazard_and_protect(protect.cast())
-                    .unwrap_or_else(|| L::acquire_hazard_for(self.local_access, protect.cast()));
+                    .unwrap_or_else(|| self.local_access.wrap_hazard(protect.cast()));
 
                 // the initially taken snapshot is now stored in the hazard pointer, but the value
                 // stored in `atomic` may have changed already
-                // (LIB:2) this load has to synchronize with any potential store to `atomic`
+                // (GUA:2) this load has to synchronize-with any potential store to `atomic`
                 while let Some(ptr) = MarkedNonNull::new(atomic.load_raw(order)) {
                     let unmarked = ptr.decompose_non_null();
                     if protect == unmarked {
@@ -107,10 +100,9 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
                 let unmarked = ptr.decompose_non_null();
                 let hazard = self
                     .take_hazard_and_protect(unmarked.cast())
-                    .unwrap_or_else(|| L::acquire_hazard_for(self.local_access, unmarked.cast()));
+                    .unwrap_or_else(|| self.local_access.wrap_hazard(unmarked.cast()));
 
-                // (LIB:2) this load operation should synchronize-with any store operation to the
-                // same `atomic`
+                // (GUA:3) this load has to synchronize-with any potential store to `atomic`
                 if atomic.load_raw(order) != ptr {
                     return Err(NotEqual);
                 }
@@ -137,7 +129,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
                 LocalAccess::increase_ops_count(self.local_access);
             }
 
-            // (LIB:3) this `Release` store synchronizes-with any `Acquire` load on the `protected`
+            // (GUA:4) this `Release` store synchronizes-with any `Acquire` load on the `protected`
             // field of the same hazard pointer
             hazard.set_scoped(Ordering::Release);
             self.state = State::Scoped(hazard)
@@ -190,5 +182,35 @@ impl<T, L: LocalAccess, N: Unsigned> State<T, L, N> {
     #[inline]
     fn take(&mut self) -> Self {
         mem::replace(self, State::None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ptr::NonNull;
+
+    use reclaim::typenum::U0;
+    use reclaim::Protect;
+
+    use matches::assert_matches;
+
+    use crate::global::Global;
+    use crate::local::Local;
+
+    use super::State;
+
+    type Guarded<'a> = super::Guarded<i32, &'a Local, U0>;
+
+    static GLOBAL: Global = Global::new();
+
+    #[test]
+    fn empty() {
+        let local = Local::new(&GLOBAL);
+        let mut guarded = Guarded::new(&local);
+        assert_matches!(guarded.state, State::None);
+        assert!(guarded.shared().is_none());
+        assert!(guarded
+            .take_hazard_and_protect(NonNull::from(&()))
+            .is_none());
     }
 }

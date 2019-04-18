@@ -100,7 +100,7 @@
 //! [compare_exchange]: reclaim::Atomic::compare_exchange
 
 #![cfg_attr(not(feature = "std"), feature(alloc))]
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(any(test, feature = "std")), no_std)]
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
@@ -132,7 +132,7 @@ mod guarded;
 mod hazard;
 mod local;
 mod retired;
-#[cfg(test)]
+#[cfg(all(feature = "std", test))]
 mod tests;
 
 #[cfg(feature = "std")]
