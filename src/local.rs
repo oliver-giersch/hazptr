@@ -56,8 +56,9 @@ impl Local {
     pub(crate) fn get_hazard(&self, protect: NonNull<()>) -> &'static Hazard {
         let local = unsafe { &mut *self.0.get() };
         if let Some(hazard) = local.hazard_cache.pop() {
-            // this operation issues a full `SeqCst` memory fence
-            hazard.set_protected(protect);
+            // (LOC:1) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1) and establishes
+            // a total order of all stores writing a protected pointer
+            hazard.set_protected(protect, Ordering::SeqCst);
 
             hazard
         } else {
@@ -76,7 +77,7 @@ impl Local {
             .hazard_cache
             .try_push(hazard)?;
 
-        // (LOC:1) this `Release` store synchronizes-with any `Acquire` load on the
+        // (LOC:2) this `Release` store synchronizes-with any `Acquire` load on the
         // `protected` field of the same hazard pointer
         hazard.set_reserved(Ordering::Release);
         Ok(())
@@ -169,7 +170,7 @@ impl Drop for LocalInner {
             hazard.set_free(Ordering::Relaxed);
         }
 
-        // (LOC:2) this `Release` fence synchronizes-with the `SeqCst` fence (GLO:1)
+        // (LOC:3) this `Release` fence synchronizes-with the `SeqCst` fence (GLO:1)
         atomic::fence(Ordering::Release);
 
         self.scan_hazards();

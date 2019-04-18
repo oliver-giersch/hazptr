@@ -26,7 +26,8 @@ impl<T, L: LocalAccess, N: Unsigned> Clone for Guarded<T, L, N> {
     #[inline]
     fn clone(&self) -> Self {
         if let State::Protected(hazard, ptr) = &self.state {
-            // (GUA:1) this `Acquire` load ...
+            // (GUA:1) this `Acquire` load synchronizes-with any `Release` or `SeqCst` store to the
+            // `protected` field of the same hazard (without total global ordering).
             let protect = hazard.protected(Ordering::Acquire).unwrap().into_inner();
             Self {
                 state: State::Protected(self.local_access.wrap_hazard(protect), *ptr),
@@ -66,7 +67,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
 
                 // the initially taken snapshot is now stored in the hazard pointer, but the value
                 // stored in `atomic` may have changed already
-                // (GUA:2) this load has to synchronize-with any potential store to `atomic`
+                // this load has to synchronize-with any potential store to `atomic`
                 while let Some(ptr) = MarkedNonNull::new(atomic.load_raw(order)) {
                     let unmarked = ptr.decompose_non_null();
                     if protect == unmarked {
@@ -77,8 +78,9 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
                         return Some(unsafe { Shared::from_marked_non_null(ptr) });
                     }
 
-                    // this operation issues a full `SeqCst` memory fence
-                    hazard.set_protected(unmarked.cast());
+                    // (GUA:2) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1) and
+                    // establishes a total order of all stores writing a protected pointer
+                    hazard.set_protected(unmarked.cast(), Ordering::SeqCst);
                     protect = unmarked;
                 }
 
@@ -102,7 +104,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
                     .take_hazard_and_protect(unmarked.cast())
                     .unwrap_or_else(|| self.local_access.wrap_hazard(unmarked.cast()));
 
-                // (GUA:3) this load has to synchronize-with any potential store to `atomic`
+                // this load has to synchronize-with any potential store to `atomic`
                 if atomic.load_raw(order) != ptr {
                     return Err(NotEqual);
                 }
@@ -129,7 +131,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
                 LocalAccess::increase_ops_count(self.local_access);
             }
 
-            // (GUA:4) this `Release` store synchronizes-with any `Acquire` load on the `protected`
+            // (GUA:3) this `Release` store synchronizes-with any `Acquire` load on the `protected`
             // field of the same hazard pointer
             hazard.set_scoped(Ordering::Release);
             self.state = State::Scoped(hazard)
@@ -153,8 +155,9 @@ impl<T, L: LocalAccess, N: Unsigned> Guarded<T, L, N> {
     fn take_hazard_and_protect(&mut self, protect: NonNull<()>) -> Option<HazardPtr<L>> {
         match self.state.take() {
             State::Protected(hazard, _) | State::Scoped(hazard) => {
-                // this operation issues a full `SeqCst` memory fence
-                hazard.set_protected(protect);
+                // (GUA:4) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1) and establishes
+                // a total order of all stores writing a protected pointer
+                hazard.set_protected(protect, Ordering::SeqCst);
                 Some(hazard)
             }
             _ => None,

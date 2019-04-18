@@ -116,10 +116,9 @@ impl Hazard {
     ///
     /// This operation issues a full memory fence.
     #[inline]
-    pub fn set_protected(&self, protect: NonNull<()>) {
-        // (HAZ:2) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1) and establishes
-        // a total order of all stores writing a protected pointer
-        self.protected.store(protect.as_ptr(), Ordering::SeqCst);
+    pub fn set_protected(&self, protect: NonNull<()>, order: Ordering) {
+        debug_assert_eq!(Ordering::SeqCst, order);
+        self.protected.store(protect.as_ptr(), order);
     }
 
     /// Creates new hazard for insertion in the global hazards list protecting the given pointer.
@@ -181,7 +180,7 @@ mod tests {
         assert_eq!(None, hazard.protected(Ordering::Relaxed));
         assert_eq!(RESERVED, hazard.protected.load(Ordering::Relaxed));
 
-        hazard.set_protected(ptr.cast());
+        hazard.set_protected(ptr.cast(), Ordering::SeqCst);
         assert_eq!(
             ptr.as_ptr() as usize,
             hazard.protected(Ordering::Relaxed).unwrap().address()
