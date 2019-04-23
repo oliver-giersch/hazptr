@@ -56,8 +56,7 @@ impl Local {
     pub(crate) fn get_hazard(&self, protect: NonNull<()>) -> &'static Hazard {
         let local = unsafe { &mut *self.0.get() };
         if let Some(hazard) = local.hazard_cache.pop() {
-            // (LOC:1) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1) and establishes
-            // a total order of all stores writing a protected pointer
+            // (LOC:1) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1).
             hazard.set_protected(protect, Ordering::SeqCst);
 
             hazard

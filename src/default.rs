@@ -32,7 +32,11 @@ unsafe impl Reclaim for HP {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// DefaultAccess
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Copy, Clone, Debug, Default)]
 pub struct DefaultAccess;
 
 impl LocalAccess for DefaultAccess {
@@ -45,8 +49,7 @@ impl LocalAccess for DefaultAccess {
     fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleErr> {
         LOCAL
             .try_with(|local| Local::try_recycle_hazard(local, hazard))
-            .or(Err(RecycleErr::Access))
-            .and(Ok(()))
+            .unwrap_or(Err(RecycleErr::Access))
     }
 
     #[inline]

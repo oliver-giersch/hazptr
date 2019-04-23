@@ -1,4 +1,5 @@
 use std::borrow::Borrow;
+use std::cmp::Ordering::{Equal, Greater};
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::mem;
@@ -15,42 +16,58 @@ type Shared<'g, T> = hazptr::Shared<'g, T, typenum::U1>;
 
 const DEFAULT_BUCKETS: usize = 256;
 
+/// A concurrent hash set.
 pub struct HashSet<T, S = RandomState> {
     size: usize,
     buckets: Box<[Atomic<Node<T>>]>,
     hash_builder: S,
 }
 
-impl<T: Eq + Hash> Default for HashSet<T, RandomState> {
+impl<T: Ord + Hash> Default for HashSet<T, RandomState> {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Eq + Hash> HashSet<T, RandomState> {
+impl<T: Ord + Hash> HashSet<T, RandomState> {
+    #[inline]
     pub fn new() -> Self {
-        Self {
-            size: DEFAULT_BUCKETS,
-            buckets: Self::allocate_buckets(DEFAULT_BUCKETS),
-            hash_builder: RandomState::new(),
-        }
+        Self::with_hasher(RandomState::new())
     }
 
+    #[inline]
     pub fn with_buckets(buckets: usize) -> Self {
         assert!(buckets > 0, "hash set needs at least one bucket");
-        Self {
-            size: buckets,
-            buckets: Self::allocate_buckets(buckets),
-            hash_builder: RandomState::new(),
-        }
+        Self::with_hasher_and_buckets(RandomState::new(), buckets)
     }
 }
 
 impl<T, S> HashSet<T, S>
 where
-    T: Eq + Hash,
+    T: Ord + Hash,
     S: BuildHasher,
 {
+    #[inline]
+    pub fn with_hasher(hash_builder: S) -> Self {
+        Self {
+            size: DEFAULT_BUCKETS,
+            buckets: Self::allocate_buckets(DEFAULT_BUCKETS),
+            hash_builder,
+        }
+    }
+
+    #[inline]
+    pub fn with_hasher_and_buckets(hash_builder: S, buckets: usize) -> Self {
+        assert!(buckets > 0, "hash set needs at least one bucket");
+        Self {
+            size: buckets,
+            buckets: Self::allocate_buckets(buckets),
+            hash_builder,
+        }
+    }
+
+    #[inline]
     fn allocate_buckets(buckets: usize) -> Box<[Atomic<Node<T>>]> {
         assert_eq!(mem::size_of::<Atomic<Node<T>>>(), mem::size_of::<usize>());
 
@@ -64,7 +81,11 @@ where
     }
 
     #[inline]
-    fn make_hash(builder: &S, key: &T, buckets: usize) -> usize {
+    fn make_hash<Q>(builder: &S, key: &Q, buckets: usize) -> usize
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let mut state = builder.build_hasher();
         key.hash(&mut state);
         (state.finish() % buckets as u64) as usize
@@ -73,7 +94,7 @@ where
 
 impl<T, S> HashSet<T, S>
 where
-    T: Eq + Hash + 'static,
+    T: Ord + Hash + 'static,
     S: BuildHasher,
 {
     /// TODO: Doc...
@@ -88,28 +109,30 @@ where
     }
 
     /// TODO: Doc...
-    pub fn remove<Q>(&self, value: &Q) -> bool
+    pub fn remove<Q>(&self, value: &Q, guards: &mut Guards<T>) -> bool
     where
         T: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: Ord + Hash,
     {
-        unimplemented!()
+        let head = &self.buckets[Self::make_hash(&self.hash_builder, value, self.size)];
+        self.remove_node(head, value, guards)
     }
 
+    /// TODO: Doc...
     fn insert_node(
         &self,
         head: &Atomic<Node<T>>,
         node: Owned<Node<T>>,
         guards: &mut Guards<T>,
     ) -> bool {
-        let key = &node.key as *const _;
         let node = Owned::leak_shared(node);
+        let key = unsafe { &node.deref().key };
 
         let success = loop {
             let iter = self.bucket_iter(head, guards);
-            if let Ok((insert, curr)) = iter.insert_position(key) {
-                if insert
-                    .compare_exchange(curr, node, Ordering::SeqCst, Ordering::SeqCst)
+            if let FoundPosition::Insert(pos, next) = iter.insert_position(key) {
+                if pos
+                    .compare_exchange(next, node, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
                 {
                     break true;
@@ -123,32 +146,53 @@ where
         success
     }
 
-    fn remove_node(&self, head: &Atomic<Node<T>>, value: &T, guards: &mut Guards<T>) -> bool {
-        let mut iter = self.bucket_iter(head, guards);
+    /// TODO: Doc...
+    fn remove_node<Q>(&self, head: &Atomic<Node<T>>, value: &Q, guards: &mut Guards<T>) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Ord + Hash,
+    {
+        /*let mut iter = self.bucket_iter(head, guards);
+        let _a = iter.next().unwrap();
+        let _b = iter.next().unwrap();
+        let _c = iter.next().unwrap();
 
-        let a = iter.next().unwrap().unwrap();
-        let b = iter.next().unwrap();
-        let c = iter.next().unwrap();
-        let d = iter.next().unwrap();
+        unsafe { println!("{:?}", &_a.unwrap().deref().key as *const _) };*/
 
-        //let x = unsafe { &a.deref().key };
-        //println!("{:p}", x);
+        /*let success = loop {
+            let iter = self.bucket_iter(head, guards);
+            if let FoundPosition::Value(prev, curr, next) = iter.insert_position(value) {
+                if let Some(next) = next {
+                    let atomic = unsafe { &curr.deref().next };
+                    let res = atomic.compare_exchange(
+                        Shared::with_tag(next, 0),
+                        Shared::with_tag(next, 1),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    );
 
-        // find or last
-
-        /*let insert = iter
-        .find_map(|res| match res {
-            Ok(node) => {
-                if &node.key == value {
-                    Some(&node.next)
-                } else {
-                    None
+                    if res.is_err() {
+                        continue;
+                    }
                 }
-            }
-            Err(_) => None,
-        })
-        .unwrap_or_else(|| iter.prev);*/
 
+                if let Ok(unlinked) = prev.compare_exchange(
+                    Shared::with_tag(curr, 0),
+                    next.strip_tag(),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    unsafe { unlinked.retire() };
+                }
+
+                break true;
+            } else {
+                break false;
+            }
+        };
+
+        guards.release_all();
+        success*/
         unimplemented!()
     }
 
@@ -175,6 +219,7 @@ pub struct Guards<T> {
 }
 
 impl<T> Guards<T> {
+    #[inline]
     fn release_all(&mut self) {
         self.prev.release();
         self.curr.release();
@@ -195,28 +240,36 @@ struct Iter<'g, 'set, T> {
 
 const DELETE_TAG: usize = 1;
 
+enum FoundPosition<'set, 'g, T> {
+    Value(&'set Atomic<Node<T>>, Option<Shared<'g, Node<T>>>),
+    Insert(&'set Atomic<Node<T>>, Option<Shared<'g, Node<T>>>),
+}
+
 impl<'g, 'set, T: 'static> Iter<'g, 'set, T>
 where
     'g: 'set,
 {
-    fn insert_position(
-        mut self,
-        insert: *const T,
-    ) -> Result<(&'set Atomic<Node<T>>, Option<Shared<'g, Node<T>>>), ()> {
+    #[inline]
+    fn insert_position<Q>(mut self, insert: &Q) -> FoundPosition<'set, 'g, T>
+    where
+        T: Borrow<Q>,
+        Q: Ord + Hash,
+    {
         while let Some(res) = self.next() {
-            if let Ok(shared) = res {
-                let node = unsafe { shared.deref() };
-                if &node.key as *const _ > insert {
-                    break;
-                } else if &node.key as *const _ == insert {
-                    return Err(());
+            if let Ok(curr) = res {
+                let node = unsafe { curr.deref() };
+                match insert.cmp(&node.key.borrow()) {
+                    Greater => break,
+                    Equal => return FoundPosition::Value(self.prev, self.guards.prev.shared()),
+                    _ => {}
                 }
             }
         }
 
-        Ok((self.prev, self.guards.prev.shared()))
+        FoundPosition::Insert(self.prev, self.guards.prev.shared())
     }
 
+    #[inline]
     fn next(&mut self) -> Option<Result<Shared<Node<T>>, IterErr>> {
         if let Some(curr) = self.guards.curr.shared() {
             let ptr = curr.into_marked_non_null();
@@ -246,7 +299,6 @@ where
                     Ordering::SeqCst,
                 ) {
                     unsafe { unlinked.retire() }
-                    // FIXME: soundness?
                     return Some(Err(IterErr::Delayed));
                 } else {
                     return self.retry();
@@ -263,6 +315,7 @@ where
         }
     }
 
+    #[inline]
     fn retry(&mut self) -> Option<Result<Shared<Node<T>>, IterErr>> {
         self.prev = self.head;
         Some(Err(IterErr::Retry))

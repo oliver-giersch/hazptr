@@ -108,6 +108,7 @@ extern crate alloc;
 pub use reclaim;
 pub use reclaim::typenum;
 
+use cfg_if::cfg_if;
 use reclaim::LocalReclaim;
 use typenum::Unsigned;
 
@@ -135,19 +136,19 @@ mod retired;
 #[cfg(all(feature = "std", test))]
 mod tests;
 
-#[cfg(feature = "std")]
-pub use crate::default::guarded;
-#[cfg(feature = "std")]
-pub type Guarded<T, N> = crate::guarded::Guarded<T, crate::default::DefaultAccess, N>;
-
-#[cfg(not(feature = "std"))]
-pub use crate::{
-    global::Global,
-    hazard::{Hazard, HazardPtr},
-    local::{Local, LocalAccess, RecycleErr},
-};
-#[cfg(not(feature = "std"))]
-pub type Guarded<'a, T, N> = crate::guarded::Guarded<T, &'a Local, N>;
+cfg_if! {
+    if #[cfg(feature = "std")] {
+        pub use crate::default::guarded;
+        pub type Guarded<T, N> = crate::guarded::Guarded<T, crate::default::DefaultAccess, N>;
+    } else {
+        pub use crate::{
+            global::Global,
+            hazard::{Hazard, HazardPtr},
+            local::{Local, LocalAccess, RecycleErr},
+        };
+        pub type Guarded<'a, T, N> = crate::guarded::Guarded<T, &'a Local, N>;
+    }
+}
 
 use crate::retired::Retired;
 

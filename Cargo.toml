@@ -24,6 +24,9 @@ maximum-reclamation-freq = []
 # attempt to reclaim records less often (less expensive)
 reduced-reclamation-freq = []
 
+[dependencies]
+cfg-if = "0.1.7"
+
 [dependencies.arrayvec]
 version = "0.4.10"
 default-features = false

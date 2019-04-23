@@ -44,11 +44,11 @@ impl Global {
     pub(crate) fn collect_protected_hazards(&'static self, vec: &mut Vec<Protected>) {
         vec.clear();
 
-        // (GLO:1) this `SeqCst` fence establishes a total order with the `SeqCst` store in (HAZ:2)
-        // and the `SeqCst` CAS (LIS:3P)
-        // sequential consistency is required here in order to ensure that all stores to `protected`
-        // for all hazard pointers are totally ordered and thus visible when the hazard pointers are
-        // scanned
+        // (GLO:1) this `SeqCst` fence synchronizes-with the `SeqCst` stores (LOC:1), (GUA:2),
+        // (GUA:4) and the `SeqCst` CAS (LIS:3P). This establishes total order between all these
+        // operations, which is required here in order to ensure that all stores protecting pointers
+        // have become fully visible, when the hazard pointers are scanned and retired records are
+        // reclaimed.
         atomic::fence(Ordering::SeqCst);
 
         vec.extend(

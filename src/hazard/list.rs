@@ -95,8 +95,7 @@ impl HazardList {
 
         while let Some(node) = unsafe { curr.as_ref() } {
             if node.hazard.protected.load(Ordering::Relaxed) == FREE {
-                // (LIS:3P) this `SeqCst` CAS establishes a total order with the `SeqCst` store
-                // (HAZ:1) and the `SeqCst` fence (GLO:1)
+                // (LIS:3P) this `SeqCst` CAS synchronizes-with the `SeqCst` fence (GLO:1)
                 let prev = node.hazard.protected.compare_and_swap(
                     FREE,
                     protect.as_ptr(),

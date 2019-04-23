@@ -78,8 +78,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
                         return Some(unsafe { Shared::from_marked_non_null(ptr) });
                     }
 
-                    // (GUA:2) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1) and
-                    // establishes a total order of all stores writing a protected pointer
+                    // (GUA:2) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1)
                     hazard.set_protected(unmarked.cast(), Ordering::SeqCst);
                     protect = unmarked;
                 }
@@ -155,8 +154,7 @@ impl<T, L: LocalAccess, N: Unsigned> Guarded<T, L, N> {
     fn take_hazard_and_protect(&mut self, protect: NonNull<()>) -> Option<HazardPtr<L>> {
         match self.state.take() {
             State::Protected(hazard, _) | State::Scoped(hazard) => {
-                // (GUA:4) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1) and establishes
-                // a total order of all stores writing a protected pointer
+                // (GUA:4) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1)
                 hazard.set_protected(protect, Ordering::SeqCst);
                 Some(hazard)
             }

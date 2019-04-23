@@ -153,7 +153,7 @@ impl AbandonedBags {
     /// into one.
     #[inline]
     pub fn take_and_merge(&self) -> Option<Box<RetiredBag>> {
-        // this avoids the CAS if the stack is empty
+        // probe first in order to avoid the swap if the stack is empty
         if self.head.load(Ordering::Relaxed).is_null() {
             return None;
         }
