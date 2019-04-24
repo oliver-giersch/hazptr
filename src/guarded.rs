@@ -34,7 +34,7 @@ impl<T, L: LocalAccess, N: Unsigned> Clone for Guarded<T, L, N> {
                 local_access: self.local_access,
             }
         } else {
-            Self::new(self.local_access)
+            Self::with_access(self.local_access)
         }
     }
 }
@@ -141,7 +141,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
 impl<T, L: LocalAccess, N: Unsigned> Guarded<T, L, N> {
     /// Creates a new guarded
     #[inline]
-    pub fn new(local_access: L) -> Self {
+    pub fn with_access(local_access: L) -> Self {
         Self {
             state: State::None,
             local_access,
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn empty() {
         let local = Local::new(&GLOBAL);
-        let mut guarded = Guarded::new(&local);
+        let mut guarded = Guarded::with_access(&local);
         assert_matches!(guarded.state, State::None);
         assert!(guarded.shared().is_none());
         assert!(guarded

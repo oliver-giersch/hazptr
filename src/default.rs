@@ -17,7 +17,7 @@ thread_local!(static LOCAL: Local = Local::new(&GLOBAL));
 /// Creates a new (empty) guarded pointer that can be used to acquire hazard pointers.
 #[inline]
 pub fn guarded<T, N: Unsigned>() -> impl Protect<Item = T, MarkBits = N, Reclaimer = HP> {
-    Guarded::new(DefaultAccess)
+    Guarded::with_access(DefaultAccess)
 }
 
 unsafe impl Reclaim for HP {
@@ -55,6 +55,20 @@ impl LocalAccess for DefaultAccess {
     #[inline]
     fn increase_ops_count(self) {
         LOCAL.with(Local::increase_ops_count);
+    }
+}
+
+impl<T, N: Unsigned> Guarded<T, N> {
+    #[inline]
+    pub fn new() -> Self {
+        Self::with_access(DefaultAccess)
+    }
+}
+
+impl<T, N: Unsigned> Default for Guarded<T, N> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
     }
 }
 

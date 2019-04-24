@@ -146,7 +146,7 @@ cfg_if! {
             hazard::{Hazard, HazardPtr},
             local::{Local, LocalAccess, RecycleErr},
         };
-        pub type Guarded<'a, T, N> = crate::guarded::Guarded<T, &'a Local, N>;
+        pub type LocalGuarded<'a, T, N> = crate::guarded::Guarded<T, &'a Local, N>;
     }
 }
 
