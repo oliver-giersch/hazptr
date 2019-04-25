@@ -154,3 +154,7 @@ where
         set.remove_node(value, guards)
     }
 }
+
+fn main() {
+    assert!(true);   
+}
