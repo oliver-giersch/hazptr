@@ -117,7 +117,7 @@ use typenum::Unsigned;
 pub type Atomic<T, N> = reclaim::Atomic<T, HP, N>;
 /// Shared reference to a value loaded from shared memory that is protected by a hazard pointer.
 pub type Shared<'g, T, N> = reclaim::Shared<'g, T, HP, N>;
-/// A pointer type for heap allocation like [`Box`](std::boxed::Box) that can be marked.
+/// A pointer type for heap allocation like `Box` that can be marked.
 pub type Owned<T, N> = reclaim::Owned<T, HP, N>;
 /// Unique reference to a value that has been successfully unlinked and can be retired.
 pub type Unlinked<T, N> = reclaim::Unlinked<T, HP, N>;
@@ -139,14 +139,24 @@ mod tests;
 cfg_if! {
     if #[cfg(feature = "std")] {
         pub use crate::default::guarded;
+        /// A guarded pointer that can be used to acquire hazard pointers.
         pub type Guarded<T, N> = crate::guarded::Guarded<T, crate::default::DefaultAccess, N>;
     } else {
         pub use crate::{
             global::Global,
-            hazard::{Hazard, HazardPtr},
-            local::{Local, LocalAccess, RecycleErr},
+            local::{Local, RecycleErr},
         };
+        /// A **thread local** guarded pointer that can be used to acquire hazard pointers.
         pub type LocalGuarded<'a, T, N> = crate::guarded::Guarded<T, &'a Local, N>;
+
+        /// Creates a new (empty) local guarded pointer that can be used to acquire hazard pointers.
+        #[inline]
+        pub fn guarded<'a, T: 'a, N: Unsigned + 'static>(
+            local: &'a Local
+        ) -> impl reclaim::Protect<Item = T, MarkBits = N, Reclaimer = HP> + 'a
+        {
+            LocalGuarded::with_access(local)
+        }
     }
 }
 
@@ -165,11 +175,23 @@ unsafe impl LocalReclaim for HP {
     // hazard pointers do not require any extra information per each allocated record
     type RecordHeader = ();
 
+    /// Retires an unlinked record and caches in it `local` until it can be safely reclaimed.
+    ///
+    /// # Safety
+    ///
+    /// This is safe to call as long as no other thread can get a new reference to `unlinked`.
     #[inline]
     unsafe fn retire_local<T: 'static, N: Unsigned>(local: &Self::Local, unlinked: Unlinked<T, N>) {
         Self::retire_local_unchecked(local, unlinked)
     }
 
+    /// Retires an unlinked record and caches in it `local` until it can be safely reclaimed.
+    ///
+    /// # Safety
+    ///
+    /// This is safe to call as long as no other thread can get a new reference to `unlinked`.
+    /// Additionally, the caller must ensure that no non-static references are accessed when `T`
+    /// is dropped.
     #[inline]
     unsafe fn retire_local_unchecked<T, N: Unsigned>(
         local: &Self::Local,
