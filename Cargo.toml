@@ -38,6 +38,7 @@ default-features = false
 
 [dev-dependencies]
 matches = "0.1.8"
+rand = "0.6.5"
 
 [[example]]
 name = "hash_set"
@@ -45,4 +46,8 @@ required-features = ["std"]
 
 [[example]]
 name = "treiber"
+required-features = ["std"]
+
+[[test]]
+name = "integration"
 required-features = ["std"]

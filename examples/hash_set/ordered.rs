@@ -21,12 +21,6 @@ impl<T> OrderedSet<T>
 where
     T: Ord + 'static,
 {
-    /// Creates an empty ordered set.
-    #[inline]
-    pub fn new() -> Self {
-        Self { head: Atomic::null() }
-    }
-
     /// Inserts a new node for the given `value` and returns `true`, if it did not already exist
     /// in the set.
     #[inline]
@@ -37,6 +31,8 @@ where
             let iter = self.iter(guards);
             let key = &node.elem;
             if let Ok((pos, next)) = iter.find_insert_position(key) {
+                // (ORD:0) this ...
+                node.next.store(next, Ordering::SeqCst);
                 // (ORD:1) this ...
                 match pos.compare_exchange(next, node, Ordering::SeqCst, Ordering::SeqCst) {
                     Ok(_) => break true,
@@ -118,6 +114,18 @@ where
     }
 }
 
+impl<T> Drop for OrderedSet<T> {
+    #[inline]
+    fn drop(&mut self) {
+        let mut node = self.head.take();
+
+        while let Some(mut curr) = node {
+            node = curr.next.take();
+            mem::drop(curr);
+        }
+    }
+}
+
 /// A container for the hazard pointers required to safely traverse a hash set.
 #[derive(Debug, Default)]
 pub struct Guards<T> {
@@ -164,6 +172,7 @@ struct Iter<'g, 'set, T> {
 macro_rules! retry {
     ($self:ident) => {
         $self.prev = $self.head;
+        let _ = $self.guards.curr.acquire($self.head, Ordering::SeqCst);
         return Some(Err(IterErr::Retry));
     };
 }
@@ -189,7 +198,7 @@ where
                 let key = unsafe { pos.curr.deref().elem.borrow() };
                 match key.cmp(insert) {
                     Equal => return Err(self.into_iter_pos()),
-                    Greater => break,
+                    Greater => return Ok((self.old_prev, self.guards.prev.shared())),
                     _ => {}
                 }
             }
@@ -250,7 +259,7 @@ where
                 Some(Ok(IterPos {
                     prev: self.old_prev,
                     curr: self.guards.prev.shared().unwrap(),
-                    next: self.guards.next.shared(),
+                    next: self.guards.curr.shared(),
                 }))
             }
         }
@@ -261,7 +270,7 @@ where
         IterPos {
             prev: self.old_prev,
             curr: self.guards.prev.shared().unwrap(),
-            next: self.guards.next.shared(),
+            next: self.guards.curr.shared(),
         }
     }
 }
