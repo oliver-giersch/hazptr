@@ -47,10 +47,7 @@ impl<L: LocalAccess> HazardPtr<L> {
     /// Creates a new hazard wrapper
     #[inline]
     pub fn new(hazard: &'static Hazard, local_access: L) -> Self {
-        Self {
-            hazard,
-            local_access,
-        }
+        Self { hazard, local_access }
     }
 }
 
@@ -120,15 +117,14 @@ impl Hazard {
     #[inline]
     pub fn set_protected(&self, protect: NonNull<()>, order: Ordering) {
         debug_assert_eq!(Ordering::SeqCst, order);
+        debug_assert!(protect.as_ptr() != RESERVED && protect.as_ptr() != SCOPED);
         self.protected.store(protect.as_ptr(), order);
     }
 
     /// Creates new hazard for insertion in the global hazards list protecting the given pointer.
     #[inline]
     fn new(protect: NonNull<()>) -> Self {
-        Self {
-            protected: AtomicPtr::new(protect.as_ptr()),
-        }
+        Self { protected: AtomicPtr::new(protect.as_ptr()) }
     }
 }
 
@@ -169,10 +165,7 @@ mod tests {
         let ptr = NonNull::from(&1);
 
         let hazard = Hazard::new(ptr.cast());
-        assert_eq!(
-            ptr.as_ptr() as usize,
-            hazard.protected(Ordering::Relaxed).unwrap().address()
-        );
+        assert_eq!(ptr.as_ptr() as usize, hazard.protected(Ordering::Relaxed).unwrap().address());
 
         hazard.set_free(Ordering::Relaxed);
         assert_eq!(None, hazard.protected(Ordering::Relaxed));
@@ -183,9 +176,6 @@ mod tests {
         assert_eq!(RESERVED, hazard.protected.load(Ordering::Relaxed));
 
         hazard.set_protected(ptr.cast(), Ordering::SeqCst);
-        assert_eq!(
-            ptr.as_ptr() as usize,
-            hazard.protected(Ordering::Relaxed).unwrap().address()
-        );
+        assert_eq!(ptr.as_ptr() as usize, hazard.protected(Ordering::Relaxed).unwrap().address());
     }
 }

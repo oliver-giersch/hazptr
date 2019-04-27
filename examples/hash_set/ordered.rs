@@ -4,6 +4,7 @@ use std::mem;
 use std::sync::atomic::Ordering;
 
 use hazptr::reclaim::prelude::*;
+use hazptr::reclaim::MarkedPtr;
 use hazptr::typenum;
 
 pub type Atomic<T> = hazptr::Atomic<T, typenum::U1>;
@@ -28,13 +29,17 @@ where
         let mut node = Owned::new(Node::new(value));
 
         let success = loop {
-            let iter = self.iter(guards);
             let key = &node.elem;
-            if let Ok((pos, next)) = iter.find_insert_position(key) {
-                // (ORD:0) this ...
-                node.next.store(next, Ordering::SeqCst);
+            if let Ok((pos, next)) = self.iter(guards).find_insert_position(key) {
                 // (ORD:1) this ...
-                match pos.compare_exchange(next, node, Ordering::SeqCst, Ordering::SeqCst) {
+                node.next.store(next.strip_tag(), Ordering::SeqCst);
+                // (ORD:2) this ...
+                match pos.compare_exchange(
+                    next.strip_tag(),
+                    node,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
                     Ok(_) => break true,
                     Err(fail) => node = fail.input,
                 }
@@ -54,33 +59,35 @@ where
         Q: Ord,
     {
         let success = loop {
-            let iter = self.iter(guards);
-            match iter.find_insert_position(value) {
+            match self.iter(guards).find_insert_position(value) {
                 Ok(_) => break false,
                 Err(IterPos { prev, curr, next }) => {
-                    if let Some(next) = next {
-                        // (ORD:2) this ...
-                        if unsafe { &curr.deref().next }
-                            .compare_exchange(
-                                Shared::with_tag(next, 0),
-                                Shared::with_tag(next, 1),
-                                Ordering::SeqCst,
-                                Ordering::SeqCst,
-                            )
-                            .is_err()
-                        {
-                            continue;
-                        }
+                    let delete_marker = next
+                        .map(|next| Shared::with_tag(next, 0x1))
+                        .unwrap_or(unsafe { Shared::from_marked(MarkedPtr::new(0x1 as *mut _)) });
+
+                    if unsafe { &curr.deref().next }
+                        .compare_exchange(
+                            next.strip_tag(),
+                            delete_marker,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_err()
+                    {
+                        continue;
                     }
 
-                    // (ORD:3) this ...
-                    if let Ok(unlinked) = prev.compare_exchange(
+                    match prev.compare_exchange(
                         Shared::with_tag(curr, 0),
                         next.strip_tag(),
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     ) {
-                        unsafe { unlinked.retire() };
+                        Ok(unlinked) => unsafe { unlinked.retire() },
+                        Err(_) => {
+                            let _ = self.iter(guards).find_insert_position(value);
+                        }
                     }
 
                     break true;
@@ -107,8 +114,13 @@ where
 
     #[inline]
     fn iter<'g, 'set>(&'set self, guards: &'g mut Guards<T>) -> Iter<'g, 'set, T> {
-        // (ORD:4) this ...
-        let _ = guards.curr.acquire(&self.head, Ordering::SeqCst);
+        loop {
+            // (ORD:5) this ...
+            let curr = guards.curr.acquire(&self.head, Ordering::SeqCst);
+            if curr.tag() != DELETE_TAG {
+                break;
+            }
+        }
 
         Iter { head: &self.head, prev: &self.head, old_prev: &self.head, guards }
     }
@@ -122,6 +134,10 @@ impl<T> Drop for OrderedSet<T> {
         while let Some(mut curr) = node {
             node = curr.next.take();
             mem::drop(curr);
+
+            if node.as_marked().is_null() {
+                return;
+            }
         }
     }
 }
@@ -171,9 +187,13 @@ struct Iter<'g, 'set, T> {
 
 macro_rules! retry {
     ($self:ident) => {
-        $self.prev = $self.head;
-        let _ = $self.guards.curr.acquire($self.head, Ordering::SeqCst);
-        return Some(Err(IterErr::Retry));
+        loop {
+            $self.prev = $self.head;
+            let curr = $self.guards.curr.acquire($self.head, Ordering::SeqCst);
+            if curr.tag() != DELETE_TAG {
+                return Some(Err(IterErr::Retry));
+            }
+        }
     };
 }
 
@@ -214,51 +234,60 @@ where
             Some(curr) => {
                 // it is necessary to dereference the raw pointer here in order to avoid binding the
                 // lifetime of `next` to `'a` since it needs to be at least `'set`.
-                let ptr = curr.into_marked_non_null();
-                let next = unsafe { &(*ptr.decompose_ptr()).next };
-                // (ORD:5) this ...
-                let unprotected = next.load_unprotected(Ordering::SeqCst);
+                let curr_ptr = curr.into_marked_non_null();
+                if curr_ptr.decompose_ptr().is_null() {
+                    return None;
+                }
 
+                let next = unsafe { &(*curr_ptr.decompose_ptr()).next };
                 // (ORD:6) this ...
+                let next_ptr = next.load_unprotected(Ordering::SeqCst); //alleged use-after-free
+
+                // (ORD:7) this ...
                 if self
                     .guards
                     .next
-                    .acquire_if_equal(next, unprotected.as_marked(), Ordering::SeqCst)
+                    .acquire_if_equal(next, next_ptr.as_marked(), Ordering::SeqCst)
                     .is_err()
                 {
                     retry!(self);
                 }
 
-                let expected = curr.strip_tag();
-                // (ORD:7) this ...
-                if self.prev.load_unprotected(Ordering::SeqCst).as_marked() != expected.as_marked()
-                {
+                let curr_expected = curr.strip_tag();
+                // (ORD:8) this ...
+                if self.prev.load_raw(Ordering::SeqCst) != curr_expected.as_marked() {
                     retry!(self);
                 }
 
-                if unprotected.tag() == DELETE_TAG {
-                    // (ORD:8) this ...
-                    if let Ok(unlinked) = self.prev.compare_exchange(
-                        expected,
-                        unprotected.strip_tag(),
+                if next_ptr.tag() == DELETE_TAG {
+                    // (ORD:9) this ...
+                    match self.prev.compare_exchange(
+                        curr_expected,
+                        next_ptr.strip_tag(),
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     ) {
-                        unsafe { unlinked.retire() };
-                    } else {
-                        retry!(self);
+                        Ok(unlinked) => {
+                            unsafe { unlinked.retire() };
+                            // (ORD:11) this ...
+                            self.guards.curr.acquire(next, Ordering::SeqCst);
+
+                            return Some(Err(IterErr::Stalled));
+                        }
+                        Err(_) => retry!(self),
                     }
+                } else {
+                    self.old_prev = self.prev;
+                    self.prev = next;
+                    mem::swap(&mut self.guards.prev, &mut self.guards.curr);
                 }
 
-                self.old_prev = self.prev;
-                self.prev = next;
-                mem::swap(&mut self.guards.prev, &mut self.guards.curr);
-                // (ORD:9) this ...
+                // (ORD:11) this ...
                 self.guards.curr.acquire(next, Ordering::SeqCst);
 
                 Some(Ok(IterPos {
                     prev: self.old_prev,
-                    curr: self.guards.prev.shared().unwrap(),
+                    curr: self.guards.prev.shared().expect("`prev` must not be `None`"),
                     next: self.guards.curr.shared(),
                 }))
             }
@@ -287,4 +316,5 @@ struct IterPos<'a, 'set, T> {
 #[derive(Debug)]
 enum IterErr {
     Retry,
+    Stalled,
 }

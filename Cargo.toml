@@ -51,3 +51,6 @@ required-features = ["std"]
 [[test]]
 name = "integration"
 required-features = ["std"]
+
+[profile.dev]
+opt-level = 1

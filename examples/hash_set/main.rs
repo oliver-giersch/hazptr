@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 mod ordered;
+mod original;
 
 use crate::ordered::{Guards, OrderedSet};
 
@@ -293,7 +294,11 @@ fn main() {
                 let mut guards = Guards::new();
                 let mut alloc_count = 0u32;
 
-                for _ in 0..OPS_COUNT {
+                for ops in 0..OPS_COUNT {
+                    if ops > 0 && ops % (OPS_COUNT / 10) == 0 {
+                        println!("thread {}: {} out of {} ops", id, ops, OPS_COUNT);
+                    }
+
                     let value: i8 = rand::thread_rng().gen();
                     if set.contains(&value, &mut guards) {
                         set.remove(&value, &mut guards);
@@ -303,6 +308,7 @@ fn main() {
                     }
                 }
 
+                println!("thread {}: done", id);
                 alloc_count
             })
         })

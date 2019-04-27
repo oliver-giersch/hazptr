@@ -24,10 +24,7 @@ impl Global {
     /// Creates a new instance of a `Global`.
     #[inline]
     pub const fn new() -> Self {
-        Self {
-            hazards: HazardList::new(),
-            abandoned: AbandonedBags::new(),
-        }
+        Self { hazards: HazardList::new(), abandoned: AbandonedBags::new() }
     }
 
     /// Acquires a hazard pointer from the global list and sets it to protect the given pointer.
@@ -51,11 +48,10 @@ impl Global {
         // reclaimed.
         atomic::fence(Ordering::SeqCst);
 
-        vec.extend(
-            self.hazards
-                .iter()
-                .filter_map(|hazard| hazard.protected(Ordering::Relaxed)),
-        )
+        let iter =
+            self.hazards.iter().fuse().filter_map(|hazard| hazard.protected(Ordering::Relaxed));
+
+        vec.extend(iter);
     }
 
     /// Stores an exiting thread's non-empty bag of retired records, which could not be reclaimed at

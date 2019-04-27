@@ -21,7 +21,7 @@ impl Drop for DropCount<'_> {
 
 fn main() {
     const THREADS: usize = 8;
-    const PER_THREAD_ALLOCATIONS: usize = 1_000_000 + 1_000;
+    const PER_THREAD_ALLOCATIONS: usize = 10_000_000 + 1_000;
     static COUNTERS: [ThreadCount; THREADS] = [
         ThreadCount(AtomicUsize::new(0)),
         ThreadCount(AtomicUsize::new(0)),
@@ -44,7 +44,7 @@ fn main() {
                     stack.push(DropCount(counter));
                 }
 
-                for _ in 0..1_000_000 {
+                for _ in 0..10_000_000 {
                     let _res = stack.pop();
                     stack.push(DropCount(counter));
                 }
@@ -63,10 +63,7 @@ fn main() {
     }
 
     mem::drop(stack);
-    let drop_sum = COUNTERS
-        .iter()
-        .map(|local| local.0.load(Ordering::Relaxed))
-        .sum();
+    let drop_sum = COUNTERS.iter().map(|local| local.0.load(Ordering::Relaxed)).sum();
 
     assert_eq!(THREADS * PER_THREAD_ALLOCATIONS, drop_sum);
     println!("total dropped records: {}, no memory was leaked", drop_sum);

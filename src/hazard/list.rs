@@ -70,19 +70,16 @@ impl HazardList {
     /// Creates a new empty list.
     #[inline]
     pub const fn new() -> Self {
-        Self {
-            head: AtomicPtr::new(ptr::null_mut()),
-        }
+        Self { head: AtomicPtr::new(ptr::null_mut()) }
     }
 
     /// Creates a (fused) iterator for the list.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = &Hazard> {
+    pub fn iter(&self) -> Iter {
         Iter {
             // (LIS:1) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
             current: unsafe { self.head.load(Ordering::Acquire).as_ref() },
         }
-        .fuse()
     }
 
     /// Acquires an already inserted and inactive hazard pointer or allocates a new one at the tail
@@ -165,13 +162,11 @@ impl<'a> Iterator for Iter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let next = self.current.take();
-        if let Some(node) = next {
-            // (LIS:6) this `Acquire` load synchronizes with the `Release` CAS (LIS:5)
+        self.current.take().map(|node| {
+            // (LIS:6) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
             self.current = unsafe { node.next.load(Ordering::Acquire).as_ref() };
-        }
-
-        next.map(|node| &*node.hazard)
+            &*node.hazard
+        })
     }
 }
 
@@ -199,10 +194,7 @@ mod tests {
 
         let list = HazardList::new();
         let hazard = list.get_hazard(ptr);
-        assert_eq!(
-            hazard.protected.load(Ordering::Relaxed),
-            0xDEAD_BEEF as *mut ()
-        );
+        assert_eq!(hazard.protected.load(Ordering::Relaxed), 0xDEAD_BEEF as *mut ());
     }
 
     #[test]
@@ -216,6 +208,7 @@ mod tests {
 
         assert!(list
             .iter()
+            .fuse()
             .all(|hazard| hazard.protected.load(Ordering::Relaxed) == ptr.as_ptr()));
     }
 }
