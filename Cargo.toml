@@ -50,7 +50,7 @@ required-features = ["std"]
 
 [[test]]
 name = "integration"
-required-features = ["std"]
+required-features = ["std", "count-release", "maximum-reclamation-freq"]
 
 [profile.dev]
 opt-level = 1

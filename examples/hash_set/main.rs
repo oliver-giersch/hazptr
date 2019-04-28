@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 mod ordered;
-mod original;
 
 use crate::ordered::{Guards, OrderedSet};
 
@@ -282,8 +281,8 @@ fn main() {
         ThreadCount(AtomicUsize::new(0)),
     ];
 
-    //test_insert_remove();
-    //test_random();
+    test_insert_remove();
+    test_random();
 
     // the single bucket ensures maximum contention
     let set = Arc::new(HashSet::with_buckets(1));

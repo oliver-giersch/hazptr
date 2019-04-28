@@ -133,8 +133,6 @@ mod guarded;
 mod hazard;
 mod local;
 mod retired;
-#[cfg(all(feature = "std", test))]
-mod tests;
 
 cfg_if! {
     if #[cfg(feature = "std")] {

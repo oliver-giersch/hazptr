@@ -15,13 +15,10 @@ use crate::hazard::{Hazard, HazardPtr, Protected};
 use crate::retired::{Retired, RetiredBag};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Local
+// Constants
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[cfg(all(
-    not(feature = "maximum-reclamation-freq"),
-    not(feature = "reduced-reclamation-freq")
-))]
+#[cfg(all(not(feature = "maximum-reclamation-freq"), not(feature = "reduced-reclamation-freq")))]
 const SCAN_THRESHOLD: u32 = 100;
 #[cfg(feature = "reduced-reclamation-freq")]
 const SCAN_THRESHOLD: u32 = 200;
@@ -30,6 +27,10 @@ const SCAN_THRESHOLD: u32 = 1;
 
 const HAZARD_CACHE: usize = 16;
 const SCAN_CACHE: usize = 128;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Local
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Container for all thread local data required for reclamation with hazard pointers.
 #[derive(Debug)]
@@ -72,9 +73,7 @@ impl Local {
     /// The operation can fail if the thread local hazard cache is at maximum capacity.
     #[inline]
     pub(crate) fn try_recycle_hazard(&self, hazard: &'static Hazard) -> Result<(), RecycleErr> {
-        unsafe { &mut *self.0.get() }
-            .hazard_cache
-            .try_push(hazard)?;
+        unsafe { &mut *self.0.get() }.hazard_cache.try_push(hazard)?;
 
         // (LOC:2) this `Release` store synchronizes-with any `Acquire` load on the
         // `protected` field of the same hazard pointer
@@ -302,6 +301,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "count-release", ignore)]
     fn retire() {
         const THRESHOLD: usize = SCAN_THRESHOLD as usize;
 
@@ -337,39 +337,23 @@ mod tests {
         assert_eq!(THRESHOLD, count.load(Ordering::Relaxed));
     }
 
-    /*use std::mem;
-    use std::ptr::NonNull;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::thread;
-
-    use crate::acquire_hazard_for;
-    use crate::retired::Retired;
-
-    use super::*;
-
-
-
-
-
     #[test]
+    #[cfg_attr(feature = "max-reclamation-freq", ignore)]
     fn drop() {
         const BELOW_THRESHOLD: usize = SCAN_THRESHOLD as usize / 2;
         static COUNT: AtomicUsize = AtomicUsize::new(0);
 
-        let
+        let local = Local::new(&GLOBAL);
 
+        for _ in 0..BELOW_THRESHOLD {
+            let retired = unsafe {
+                Retired::new_unchecked(NonNull::from(Box::leak(Box::new(DropCount(&COUNT)))))
+            };
+            local.retire_record(retired);
+        }
 
-        let handle = thread::spawn(|| {
-            for _ in 0..BELOW_THRESHOLD {
-                let retired = unsafe {
-                    Retired::new_unchecked(NonNull::from(Box::leak(Box::new(DropCount(&COUNT)))))
-                };
-                retire_record(retired);
-            }
-        });
-
-        // thread is joined, LOCAL is dropped and all retired records are reclaimed
-        handle.join().unwrap();
+        // all retired records are reclaimed when local is dropped
+        mem::drop(local);
         assert_eq!(BELOW_THRESHOLD, COUNT.load(Ordering::Relaxed));
-    }*/
+    }
 }
