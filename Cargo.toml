@@ -24,6 +24,8 @@ maximum-reclamation-freq = []
 # attempt to reclaim records less often (less expensive)
 reduced-reclamation-freq = []
 
+sanitize-threads = []
+
 [dependencies]
 cfg-if = "0.1.7"
 
@@ -53,4 +55,4 @@ name = "integration"
 required-features = ["std", "count-release", "maximum-reclamation-freq"]
 
 [profile.dev]
-opt-level = 1
+#opt-level = 1

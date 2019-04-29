@@ -38,7 +38,7 @@
 //! deallocate a retired record for which a hazard pointer has previously been successfully
 //! acquired but the corresponding store has not yet become visible to the reclaiming thread,
 //! potentially leading to a critical **use after free** error.
-//! All stores that write a sentinel value (i.e. `0x0` for `FREE` and `0x1` for `RESERVED`) to a
+//! All stores that write a sentinel value (e.g. `0x0` for `FREE` and `0x1` for `RESERVED`) to a
 //! `protected` field, on the other hand, do not require such strict ordering constraints. If such a
 //! store is delayed and not visible during a thread's scan prior to reclamation the worst-case
 //! outcome is a record not being reclaimed that would actually be a valid candidate for
@@ -88,7 +88,7 @@ impl HazardList {
     pub fn get_hazard(&self, protect: NonNull<()>) -> &Hazard {
         let mut prev = &self.head;
         // (LIS:2) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
-        let mut curr = self.head.load(Ordering::Acquire);
+        let mut curr = prev.load(Ordering::Acquire);
 
         while let Some(node) = unsafe { curr.as_ref() } {
             if node.hazard.protected.load(Ordering::Relaxed) == FREE {
@@ -121,17 +121,18 @@ impl HazardList {
         }));
 
         loop {
+            // TODO: check comment
             // (LIS:5) this `Release` CAS synchronizes-with the `Acquire` loads on the same `head`
             // or `next` field such as (LIS:1), (LIS:2), (LIS:4) and (LIS:6)
             let res = tail
-                .compare_exchange_weak(ptr::null_mut(), node, Ordering::Release, Ordering::Relaxed)
+                .compare_exchange_weak(ptr::null_mut(), node, Ordering::AcqRel, Ordering::Acquire)
                 .map_err(|ptr| unsafe { ptr.as_ref() });
 
-            if let Err(Some(curr)) = res {
-                tail = &curr.next;
-            } else if res.is_ok() {
-                return &*node.hazard;
-            }
+            match res {
+                Ok(_) => return &*node.hazard,
+                Err(Some(curr)) => tail = &curr.next,
+                _ => {}
+            };
         }
     }
 }

@@ -124,7 +124,10 @@ where
         Q: Hash + Ord,
     {
         let set = &self.buckets[Self::make_hash(&self.hash_builder, value, self.size)];
-        set.get(value, guards).is_some()
+        let res = set.get(value, guards).is_some();
+        guards.release_all();
+
+        res
     }
 
     /// TODO: Doc...

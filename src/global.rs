@@ -48,9 +48,11 @@ impl Global {
         // reclaimed.
         atomic::fence(Ordering::SeqCst);
 
-        let iter =
-            self.hazards.iter().fuse().filter_map(|hazard| hazard.protected(Ordering::Relaxed));
-
+        let iter = self
+            .hazards
+            .iter()
+            .fuse()
+            .filter_map(|hazard| hazard.protected(crate::sanitize::RELAXED_LOAD));
         vec.extend(iter);
     }
 

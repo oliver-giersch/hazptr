@@ -15,7 +15,7 @@ use crate::hazard::{Hazard, HazardPtr, Protected};
 use crate::retired::{Retired, RetiredBag};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Constants
+// constants
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(all(not(feature = "maximum-reclamation-freq"), not(feature = "reduced-reclamation-freq")))]
@@ -99,12 +99,6 @@ impl Local {
     pub(crate) fn increase_ops_count(&self) {
         unsafe { &mut *self.0.get() }.increase_ops_count();
     }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn cached_hazards_count(&self) -> usize {
-        unsafe { &*self.0.get() }.hazard_cache.len()
-    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -148,8 +142,8 @@ impl LocalInner {
 
         self.global.collect_protected_hazards(&mut self.scan_cache);
 
-        let scan_cache = &mut self.scan_cache;
-        scan_cache.sort_unstable();
+        self.scan_cache.sort_unstable();
+        let scan_cache = &self.scan_cache;
 
         self.retired_bag.inner.retain(move |retired| {
             scan_cache
@@ -165,7 +159,7 @@ impl Drop for LocalInner {
     #[inline]
     fn drop(&mut self) {
         for hazard in &self.hazard_cache {
-            hazard.set_free(Ordering::Relaxed);
+            hazard.set_free(crate::sanitize::RELAXED_STORE);
         }
 
         // (LOC:3) this `Release` fence synchronizes-with the `SeqCst` fence (GLO:1)
@@ -305,8 +299,8 @@ mod tests {
     fn retire() {
         const THRESHOLD: usize = SCAN_THRESHOLD as usize;
 
-        let local = Local::new(&GLOBAL);
         let count = AtomicUsize::new(0);
+        let local = Local::new(&GLOBAL);
 
         // allocate & retire (THRESHOLD - 1) records
         (0..THRESHOLD - 1)
@@ -341,19 +335,17 @@ mod tests {
     #[cfg_attr(feature = "max-reclamation-freq", ignore)]
     fn drop() {
         const BELOW_THRESHOLD: usize = SCAN_THRESHOLD as usize / 2;
-        static COUNT: AtomicUsize = AtomicUsize::new(0);
 
+        let count = AtomicUsize::new(0);
         let local = Local::new(&GLOBAL);
 
-        for _ in 0..BELOW_THRESHOLD {
-            let retired = unsafe {
-                Retired::new_unchecked(NonNull::from(Box::leak(Box::new(DropCount(&COUNT)))))
-            };
-            local.retire_record(retired);
-        }
+        (0..BELOW_THRESHOLD - 1)
+            .map(|_| Box::new(DropCount(&count)))
+            .map(|record| unsafe { Retired::new_unchecked(NonNull::from(Box::leak(record))) })
+            .for_each(|retired| local.retire_record(retired));
 
         // all retired records are reclaimed when local is dropped
         mem::drop(local);
-        assert_eq!(BELOW_THRESHOLD, COUNT.load(Ordering::Relaxed));
+        assert_eq!(BELOW_THRESHOLD, count.load(Ordering::Relaxed));
     }
 }

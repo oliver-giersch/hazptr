@@ -199,3 +199,19 @@ unsafe impl LocalReclaim for HP {
         local.retire_record(Retired::new_unchecked(unmarked));
     }
 }
+
+#[cfg(not(feature = "sanitize-threads"))]
+mod sanitize {
+    use core::sync::atomic::Ordering;
+    
+    pub const RELAXED_LOAD: Ordering = Ordering::Relaxed;
+    pub const RELAXED_STORE: Ordering = Ordering::Relaxed;
+}
+
+#[cfg(feature = "sanitize-threads")]
+mod sanitize {
+    use core::sync::atomic::Ordering;
+
+    pub const RELAXED_LOAD: Ordering = Ordering::Acquire;
+    pub const RELAXED_STORE: Ordering = Ordering::Release;
+}

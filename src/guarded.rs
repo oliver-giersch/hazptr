@@ -67,7 +67,6 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
 
                 // the initially taken snapshot is now stored in the hazard pointer, but the value
                 // stored in `atomic` may have changed already
-                // this load has to synchronize-with any potential store to `atomic`
                 while let Some(ptr) = MarkedNonNull::new(atomic.load_raw(order)) {
                     let unmarked = ptr.decompose_non_null();
                     if protect == unmarked {
@@ -103,7 +102,6 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
                     .take_hazard_and_protect(unmarked.cast())
                     .unwrap_or_else(|| self.local_access.wrap_hazard(unmarked.cast()));
 
-                // this load has to synchronize-with any potential store to `atomic`
                 if atomic.load_raw(order) != ptr {
                     return Err(NotEqual);
                 }

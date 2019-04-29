@@ -71,19 +71,3 @@ impl<T, N: Unsigned> Default for Guarded<T, N> {
         Self::new()
     }
 }
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Testing related free functions
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#[cfg(test)]
-#[inline]
-pub(crate) fn global() -> &'static Global {
-    &GLOBAL
-}
-
-#[cfg(test)]
-#[inline]
-pub(crate) fn cached_hazards_count() -> usize {
-    LOCAL.with(Local::cached_hazards_count)
-}
