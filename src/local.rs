@@ -339,7 +339,7 @@ mod tests {
         let count = AtomicUsize::new(0);
         let local = Local::new(&GLOBAL);
 
-        (0..BELOW_THRESHOLD - 1)
+        (0..BELOW_THRESHOLD)
             .map(|_| Box::new(DropCount(&count)))
             .map(|record| unsafe { Retired::new_unchecked(NonNull::from(Box::leak(record))) })
             .for_each(|retired| local.retire_record(retired));
