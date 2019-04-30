@@ -59,7 +59,6 @@ impl Local {
         if let Some(hazard) = local.hazard_cache.pop() {
             // (LOC:1) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1).
             hazard.set_protected(protect, Ordering::SeqCst);
-
             hazard
         } else {
             local.global.get_hazard(protect)
@@ -165,7 +164,7 @@ impl Drop for LocalInner {
         // (LOC:3) this `Release` fence synchronizes-with the `SeqCst` fence (GLO:1)
         atomic::fence(Ordering::Release);
 
-        self.scan_hazards();
+        let _ = self.scan_hazards();
         // this is safe because the `retired_bag` field is neither accessed afterwards nor dropped
         let bag = unsafe { ptr::read(&*self.retired_bag) };
 
