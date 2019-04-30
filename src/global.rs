@@ -47,13 +47,12 @@ impl Global {
         // have become fully visible, when the hazard pointers are scanned and retired records are
         // reclaimed.
         atomic::fence(Ordering::SeqCst);
-
-        let iter = self
-            .hazards
-            .iter()
-            .fuse()
-            .filter_map(|hazard| hazard.protected(crate::sanitize::RELAXED_LOAD));
-        vec.extend(iter);
+        
+        for hazard in self.hazards.iter().fuse() {
+            if let Some(protected) = hazard.protected(crate::sanitize::RELAXED_LOAD) {
+                vec.push(protected);
+            }
+        }
     }
 
     /// Stores an exiting thread's non-empty bag of retired records, which could not be reclaimed at
