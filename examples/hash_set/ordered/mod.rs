@@ -26,8 +26,8 @@ impl<T> OrderedSet<T>
 where
     T: Ord + 'static,
 {
-    /// Inserts a new node for the given `value` and returns `true`, if it did not already exist in
-    /// the set.
+    /// Inserts a new node for the given `value` and returns `true`, if it did
+    /// not already exist in the set.
     #[inline]
     pub fn insert_node(&self, value: T, guards: &mut Guards<T>) -> bool {
         let mut node = Owned::new(Node::new(value));
@@ -55,7 +55,8 @@ where
         success
     }
 
-    /// TODO: Doc...
+    /// Tries to remove a node containing the given `value` from the set and
+    /// returns `true`, if the value was found and successfully removed.
     #[inline]
     pub fn remove_node<Q>(&self, value: &Q, guards: &mut Guards<T>) -> bool
     where
@@ -65,10 +66,12 @@ where
         let success = loop {
             match Iter::new(&self, guards).find_insert_position(value) {
                 Err(IterPos { prev, curr, next }) => {
-                    let delete_marker =
-                        next.map(|next| Shared::with_tag(next, DELETE_TAG)).unwrap_or(unsafe {
-                            Shared::from_marked(MarkedPtr::new(DELETE_TAG as *mut _))
-                        });
+                    let delete_marker = unsafe {
+                        Shared::from_marked(MarkedPtr::compose(
+                            next.as_marked().decompose_ptr(),
+                            DELETE_TAG,
+                        ))
+                    };
 
                     if unsafe { &curr.deref().next }
                         .compare_exchange(
@@ -88,7 +91,7 @@ where
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     ) {
-                        Ok(unlinked) => unsafe { unlinked.retire() }, // <-- uncomment this line and the use-after-free errors stop ???
+                        Ok(unlinked) => unsafe { unlinked.retire() },
                         _ => {
                             let _ = Iter::new(&self, guards).find_insert_position(value);
                         }
@@ -104,7 +107,7 @@ where
         success
     }
 
-    /// TODO: Doc...
+    /// Returns a reference to the value in the set, if any, that is equal to the given `value`.
     #[inline]
     pub fn get<'g, Q>(&self, value: &Q, guards: &'g mut Guards<T>) -> Option<&'g T>
     where
@@ -144,13 +147,13 @@ pub struct Guards<T> {
 }
 
 impl<T> Guards<T> {
-    /// TODO: Doc...
+    /// Creates a new guard container.
     #[inline]
     pub fn new() -> Self {
         Self { prev: Guarded::new(), curr: Guarded::new(), next: Guarded::new() }
     }
 
-    /// TODO: Doc...
+    /// Releases all contained guards.
     #[inline]
     pub fn release_all(&mut self) {
         self.prev.release();

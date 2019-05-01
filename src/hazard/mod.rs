@@ -116,8 +116,7 @@ impl Hazard {
     /// In a `debug` build, this operation panics if `ordering` is not `SeqCst`.
     #[inline]
     pub fn set_protected(&self, protect: NonNull<()>, order: Ordering) {
-        debug_assert_eq!(Ordering::SeqCst, order);
-        debug_assert!(protect.as_ptr() != RESERVED && protect.as_ptr() != SCOPED);
+        assert_eq!(order, Ordering::SeqCst, "must only be called with `SeqCst`");
         self.protected.store(protect.as_ptr(), order);
     }
 

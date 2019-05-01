@@ -83,20 +83,24 @@ where
         self.prev = self.next;
         mem::swap(&mut self.guards.prev, &mut self.guards.curr);
 
-        match self.guards.curr.acquire(self.next, Ordering::SeqCst) {
+        match self.guards.curr.acquire(self.prev, Ordering::SeqCst) {
             Some(curr) if !curr.as_marked().is_null() => {
+                if curr.tag() == DELETE_TAG {
+                    return self.retry();
+                }
+
                 let curr_next: &'g Atomic<Node<T>> =
                     unsafe { &(*curr.as_marked().decompose_ptr()).next };
 
                 let next_raw = curr_next.load_raw(Ordering::Relaxed);
                 match self.guards.next.acquire_if_equal(curr_next, next_raw, Ordering::SeqCst) {
                     Ok(maybe_next) => {
-                        if self.next.load_raw(Ordering::SeqCst) != curr.strip_tag().as_marked() {
+                        if self.prev.load_raw(Ordering::SeqCst) != curr.strip_tag().as_marked() {
                             return self.retry();
                         }
 
                         if maybe_next.tag() == DELETE_TAG {
-                            match self.next.compare_exchange(
+                            match self.prev.compare_exchange(
                                 curr.strip_tag(),
                                 maybe_next.strip_tag(),
                                 Ordering::SeqCst,

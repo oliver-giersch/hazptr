@@ -130,7 +130,13 @@ where
         res
     }
 
-    /// TODO: Doc...
+    /// Returns a reference to the value in the set, if any, that is equal to the given value.
+    ///
+    /// The value may be any borrowed form of the set's value type, but [`Hash`][Hash] and
+    /// [`Eq`][Eq] on the borrowed form *must* match those for the value type.
+    ///
+    /// [Hash]: std::hash::Hash
+    /// [Eq]: std::cmp::Eq
     #[inline]
     pub fn get<'g, Q>(&self, value: &Q, guards: &'g mut Guards<T>) -> Option<&'g T>
     where
@@ -141,14 +147,25 @@ where
         set.get(value, guards)
     }
 
-    /// TODO: Doc...
+    /// Adds a value to the set.
+    ///
+    /// If the set did not have this value present, `true` is returned.
+    /// If the set did have this value present, `false` is returned.
     #[inline]
     pub fn insert(&self, value: T, guards: &mut Guards<T>) -> bool {
         let set = &self.buckets[Self::make_hash(&self.hash_builder, &value, self.size)];
         set.insert_node(value, guards)
     }
 
-    /// TODO: Doc...
+    /// Removes a value from the set. Returns whether the value was
+    /// present in the set.
+    ///
+    /// The value may be any borrowed form of the set's value type, but
+    /// [`Hash`][Hash] and [`Eq`][Eq] on the borrowed form *must* match those for
+    /// the value type.
+    ///
+    /// [Hash]: std::hash::Hash
+    /// [Eq]: std::cmp::Eq
     #[inline]
     pub fn remove<Q>(&self, value: &Q, guards: &mut Guards<T>) -> bool
     where
