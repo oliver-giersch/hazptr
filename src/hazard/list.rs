@@ -47,7 +47,7 @@
 use core::iter::FusedIterator;
 use core::mem;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{self, AtomicPtr, Ordering};
 
 #[cfg(not(feature = "std"))]
 use alloc::boxed::Box;
@@ -55,6 +55,7 @@ use alloc::boxed::Box;
 use reclaim::align::CachePadded;
 
 use crate::hazard::{Hazard, FREE};
+use crate::sanitize;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HazardList
@@ -123,10 +124,18 @@ impl HazardList {
         loop {
             // TODO: check comment
             // (LIS:5) this `Release` CAS synchronizes-with the `Acquire` loads on the same `head`
-            // or `next` field such as (LIS:1), (LIS:2), (LIS:4) and (LIS:6)
+            // or `next` field such as (LIS:1), (LIS:2), (LIS:4) and (LIS:7)
             let res = tail
-                .compare_exchange_weak(ptr::null_mut(), node, Ordering::AcqRel, Ordering::Acquire)
+                .compare_exchange_weak(
+                    ptr::null_mut(),
+                    node,
+                    sanitize::RELEASE_CAS_SUCCESS,
+                    sanitize::RELEASE_CAS_FAILURE,
+                )
                 .map_err(|ptr| unsafe { ptr.as_ref() });
+
+            // (LIS:6) this `Acquire` fence synchronizes-with the `Release` CAS (LIS:5)
+            atomic::fence(Ordering::Acquire);
 
             match res {
                 Ok(_) => return &*node.hazard,
@@ -164,7 +173,7 @@ impl<'a> Iterator for Iter<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.current.take().map(|node| {
-            // (LIS:6) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
+            // (LIS:7) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
             self.current = unsafe { node.next.load(Ordering::Acquire).as_ref() };
             &*node.hazard
         })

@@ -8,6 +8,7 @@ use alloc::{boxed::Box, vec::Vec};
 
 use crate::hazard::{Hazard, HazardList, Protected};
 use crate::retired::{AbandonedBags, RetiredBag};
+use crate::sanitize;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Global
@@ -47,9 +48,9 @@ impl Global {
         // have become fully visible, when the hazard pointers are scanned and retired records are
         // reclaimed.
         atomic::fence(Ordering::SeqCst);
-        
+
         for hazard in self.hazards.iter().fuse() {
-            if let Some(protected) = hazard.protected(crate::sanitize::RELAXED_LOAD) {
+            if let Some(protected) = hazard.protected(sanitize::RELAXED_LOAD) {
                 vec.push(protected);
             }
         }

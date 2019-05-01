@@ -203,9 +203,12 @@ unsafe impl LocalReclaim for HP {
 #[cfg(not(feature = "sanitize-threads"))]
 mod sanitize {
     use core::sync::atomic::Ordering;
-    
+
     pub const RELAXED_LOAD: Ordering = Ordering::Relaxed;
     pub const RELAXED_STORE: Ordering = Ordering::Relaxed;
+
+    pub const RELEASE_CAS_SUCCESS: Ordering = Ordering::Release;
+    pub const RELEASE_CAS_FAILURE: Ordering = Ordering::Relaxed;
 }
 
 #[cfg(feature = "sanitize-threads")]
@@ -214,4 +217,7 @@ mod sanitize {
 
     pub const RELAXED_LOAD: Ordering = Ordering::Acquire;
     pub const RELAXED_STORE: Ordering = Ordering::Release;
+
+    pub const RELEASE_CAS_SUCCESS: Ordering = Ordering::AcqRel;
+    pub const RELEASE_CAS_FAILURE: Ordering = Ordering::Acquire;
 }

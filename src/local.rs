@@ -13,6 +13,7 @@ use arrayvec::{ArrayVec, CapacityError};
 use crate::global::Global;
 use crate::hazard::{Hazard, HazardPtr, Protected};
 use crate::retired::{Retired, RetiredBag};
+use crate::sanitize;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // constants
@@ -158,7 +159,7 @@ impl Drop for LocalInner {
     #[inline]
     fn drop(&mut self) {
         for hazard in &self.hazard_cache {
-            hazard.set_free(crate::sanitize::RELAXED_STORE);
+            hazard.set_free(sanitize::RELAXED_STORE);
         }
 
         // (LOC:3) this `Release` fence synchronizes-with the `SeqCst` fence (GLO:1)
