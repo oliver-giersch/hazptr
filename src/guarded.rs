@@ -55,6 +55,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
         match MarkedNonNull::new(atomic.load_raw(Ordering::Relaxed)) {
             Value(ptr) => {
                 let mut protect = ptr.decompose_non_null();
+                // TODO: self.protect(protect.cast());
                 let hazard = self.unwrap_and_protect(state, protect.cast());
 
                 // the initially taken snapshot is now stored in the hazard pointer, but the value
@@ -72,6 +73,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
 
                             // (GUA:2) this `SeqCst` store synchronizes-with the
                             // `SeqCst` fence (GLO:1)
+                            // TODO: self.protected_state(unmarked.cast(), Ordering::SeqCst);
                             hazard.set_protected(unmarked.cast(), Ordering::SeqCst);
                             protect = unmarked;
                         }
@@ -185,7 +187,6 @@ impl<T, L: LocalAccess, N: Unsigned> Drop for Guarded<T, L, N> {
 
 #[cfg(test)]
 mod tests {
-    use std::ptr::NonNull;
     use std::sync::atomic::Ordering;
 
     use matches::assert_matches;
@@ -195,8 +196,6 @@ mod tests {
 
     use crate::global::Global;
     use crate::local::Local;
-
-    use super::State;
 
     type Atomic = crate::Atomic<i32, U0>;
     type Owned = crate::Owned<i32, U0>;
@@ -211,9 +210,10 @@ mod tests {
     fn empty() {
         let local = Local::new(&GLOBAL);
         let mut guarded = Guarded::with_access(&local);
-        assert_matches!(guarded.state, State::None);
+        assert!(guarded.hazard.is_none());
+        assert!(guarded.marked.is_null());
+        assert!(guarded.marked().is_null());
         assert!(guarded.shared().is_none());
-        assert!(guarded.take_hazard_and_protect(NonNull::from(&())).is_none());
     }
 
     #[test]
@@ -223,17 +223,22 @@ mod tests {
 
         let null = Atomic::null();
         let _ = guarded.acquire(&null, Ordering::Relaxed);
-        assert_matches!(guarded.state, State::None);
+        assert!(guarded.hazard.is_none());
+        assert!(guarded.marked.is_null());
+        assert!(guarded.marked().is_null());
         assert!(guarded.shared().is_none());
 
         let atomic = Atomic::new(1);
         let _ = guarded.acquire(&atomic, Ordering::Relaxed);
-        assert_matches!(guarded.state, State::Protected(..));
-        assert_eq!(unsafe { guarded.shared().unwrap().deref() }, &1);
+        assert!(guarded.hazard.is_some());
+        assert!(guarded.marked.is_value());
+        assert_eq!(guarded.marked().unwrap_value().as_ref(), &1);
+        assert_eq!(guarded.shared().unwrap().as_ref(), &1);
 
         let _ = guarded.acquire(&null, Ordering::Relaxed);
-        assert_matches!(guarded.state, State::Scoped(_));
-        assert!(guarded.shared().is_none());
+        assert!(guarded.hazard.is_some());
+        assert!(guarded.hazard.unwrap().protected(Ordering::Relaxed).is_none());
+        assert!(guarded.marked.is_null());
     }
 
     #[test]
@@ -246,7 +251,7 @@ mod tests {
 
         let res = guarded.acquire_if_equal(&empty, null, Ordering::Relaxed);
         assert_matches!(res, Ok(None));
-        assert_matches!(guarded.state, State::None);
+        assert!(guarded.hazard.is_none());
         assert!(guarded.shared().is_none());
 
         let owned = Owned::new(1);
@@ -255,23 +260,29 @@ mod tests {
 
         let res = guarded.acquire_if_equal(&atomic, null, Ordering::Relaxed);
         assert_matches!(res, Err(_));
-        assert_matches!(guarded.state, State::None);
+        assert!(guarded.hazard.is_none());
         assert!(guarded.shared().is_none());
 
         let res = guarded.acquire_if_equal(&atomic, marked, Ordering::Relaxed);
         assert_matches!(res, Ok(Some(_)));
-        assert_matches!(guarded.state, State::Protected(..));
-        assert_eq!(unsafe { guarded.shared().unwrap().deref() }, &1);
+        assert!(guarded.hazard.is_some());
+        let shared = guarded.shared().unwrap();
+        assert_eq!(*shared, &1);
+        assert_eq!(
+            shared.into_marked_ptr().into_usize(),
+            guarded.hazard.unwrap().protected(Ordering::Relaxed).unwrap().address()
+        );
 
-        // a failed acquire must not alter the previous state
+        // a failed acquire attempt must not alter the previous state
         let res = guarded.acquire_if_equal(&atomic, null, Ordering::Relaxed);
         assert_matches!(res, Err(_));
-        assert_matches!(guarded.state, State::Protected(..));
-        assert_eq!(unsafe { guarded.shared().unwrap().deref() }, &1);
+        assert!(guarded.hazard.is_some());
+        assert_eq!(*guarded.shared().unwrap(), &1);
 
         let res = guarded.acquire_if_equal(&empty, null, Ordering::Relaxed);
         assert_matches!(res, Ok(None));
-        assert_matches!(guarded.state, State::Scoped(_));
+        assert!(guarded.hazard.is_some());
+        assert!(guarded.hazard.unwrap().protected(Ordering::Relaxed).is_none());
         assert!(guarded.shared().is_none());
     }
 }

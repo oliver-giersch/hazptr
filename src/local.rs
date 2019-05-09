@@ -245,10 +245,11 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::global::Global;
-    use crate::hazard::HazardPtr;
     use crate::retired::Retired;
 
     use super::{Local, HAZARD_CACHE, SCAN_CACHE, SCAN_THRESHOLD};
+
+    type Atomic = crate::Atomic<i32, crate::typenum::U0>;
 
     static GLOBAL: Global = Global::new();
 
