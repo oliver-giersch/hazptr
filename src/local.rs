@@ -260,7 +260,7 @@ mod tests {
         }
     }
 
-    #[test]
+    /*#[test]
     fn acquire_local() {
         let local = Local::new(&GLOBAL);
         let ptr = NonNull::from(&());
@@ -293,7 +293,7 @@ mod tests {
             assert_eq!(SCAN_CACHE, inner.scan_cache.capacity());
             assert_eq!(0, inner.scan_cache.len());
         }
-    }
+    }*/
 
     #[test]
     #[cfg_attr(feature = "count-release", ignore)]

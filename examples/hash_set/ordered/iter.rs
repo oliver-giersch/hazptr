@@ -66,7 +66,7 @@ where
     {
         while let Some(res) = self.next() {
             if let Ok(pos) = res {
-                let key = unsafe { pos.curr.deref().elem.borrow() };
+                let key = pos.curr.elem.borrow();
                 match key.cmp(insert) {
                     Equal => return Err(self.into_iter_pos()),
                     Greater => return Ok((self.prev, self.guards.curr.shared())),
@@ -84,25 +84,26 @@ where
         mem::swap(&mut self.guards.prev, &mut self.guards.curr);
 
         match self.guards.curr.acquire(self.prev, Ordering::SeqCst) {
-            Some(curr) if !curr.as_marked().is_null() => {
-                if curr.tag() == DELETE_TAG {
+            Value(curr) => {
+                if curr.decompose_tag() == DELETE_TAG {
                     return self.retry();
                 }
 
                 let curr_next: &'g Atomic<Node<T>> =
-                    unsafe { &(*curr.as_marked().decompose_ptr()).next };
+                    unsafe { &(*curr.as_marked_ptr().decompose_ptr()).next };
 
                 let next_raw = curr_next.load_raw(Ordering::Relaxed);
                 match self.guards.next.acquire_if_equal(curr_next, next_raw, Ordering::SeqCst) {
                     Ok(maybe_next) => {
-                        if self.prev.load_raw(Ordering::SeqCst) != curr.strip_tag().as_marked() {
+                        if self.prev.load_raw(Ordering::SeqCst) != curr.clear_tag().as_marked_ptr()
+                        {
                             return self.retry();
                         }
 
-                        if maybe_next.tag() == DELETE_TAG {
+                        if maybe_next.decompose_tag() == DELETE_TAG {
                             match self.prev.compare_exchange(
-                                curr.strip_tag(),
-                                maybe_next.strip_tag(),
+                                curr.clear_tag(),
+                                maybe_next.clear_tag(),
                                 Ordering::SeqCst,
                                 Ordering::SeqCst,
                             ) {
@@ -121,7 +122,7 @@ where
                         Some(Ok(IterPos {
                             prev: Prev::from(self.prev),
                             curr: self.guards.curr.shared().unwrap_or_else(|| unreachable!()),
-                            next: self.guards.next.shared(),
+                            next: self.guards.next.marked(),
                         }))
                     }
                     _ => self.retry(),
@@ -137,7 +138,7 @@ where
         IterPos {
             prev: Prev::from(self.prev),
             curr: self.guards.curr.shared().unwrap_or_else(|| unreachable!()),
-            next: self.guards.next.shared(),
+            next: self.guards.next.marked(),
         }
     }
 
@@ -158,7 +159,7 @@ type InsertPos<'g, T> = (&'g Atomic<Node<T>>, Option<Shared<'g, Node<T>>>);
 pub struct IterPos<'g, 'set, T> {
     pub prev: Prev<'g, 'set, T>,
     pub curr: Shared<'g, Node<T>>,
-    pub next: Option<Shared<'g, Node<T>>>,
+    pub next: Marked<Shared<'g, Node<T>>>,
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -15,9 +15,7 @@ pub struct TreiberStack<T> {
 impl<T: 'static> TreiberStack<T> {
     #[inline]
     pub fn new() -> Self {
-        Self {
-            head: Atomic::null(),
-        }
+        Self { head: Atomic::null() }
     }
 
     #[inline]
@@ -28,9 +26,7 @@ impl<T: 'static> TreiberStack<T> {
         loop {
             let head = self.head.load(Ordering::Relaxed, &mut guard);
             node.next.store(head, Ordering::Relaxed);
-            match self
-                .head
-                .compare_exchange_weak(head, node, Ordering::Release, Ordering::Relaxed)
+            match self.head.compare_exchange_weak(head, node, Ordering::Release, Ordering::Relaxed)
             {
                 Ok(_) => return,
                 Err(fail) => node = fail.input,
@@ -44,16 +40,13 @@ impl<T: 'static> TreiberStack<T> {
 
         while let Some(head) = self.head.load(Ordering::Acquire, &mut guard) {
             //load
-            let next = unsafe { head.deref() }
-                .next
-                .load_unprotected(Ordering::Relaxed);
+            let next = head.next.load_unprotected(Ordering::Relaxed);
 
             if let Ok(unlinked) =
-                self.head
-                    .compare_exchange_weak(head, next, Ordering::Release, Ordering::Relaxed)
+                self.head.compare_exchange_weak(head, next, Ordering::Release, Ordering::Relaxed)
             {
                 unsafe {
-                    let res = ptr::read(&*unlinked.deref().elem);
+                    let res = ptr::read(&*unlinked.elem);
                     unlinked.retire();
 
                     return Some(res);
@@ -85,9 +78,6 @@ struct Node<T> {
 
 impl<T> Node<T> {
     fn new(elem: T) -> Self {
-        Self {
-            elem: ManuallyDrop::new(elem),
-            next: Atomic::null(),
-        }
+        Self { elem: ManuallyDrop::new(elem), next: Atomic::null() }
     }
 }

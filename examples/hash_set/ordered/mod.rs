@@ -35,10 +35,10 @@ where
         let success = loop {
             let elem = &node.elem;
             if let Ok((pos, next)) = Iter::new(&self, guards).find_insert_position(elem) {
-                node.next.store(next.strip_tag(), Ordering::Relaxed);
+                node.next.store(next.clear_tag(), Ordering::Relaxed);
                 // (ORD:2) this `Release` CAS synchronizes-with ...
                 match pos.compare_exchange(
-                    next.strip_tag(),
+                    next.clear_tag(),
                     node,
                     Ordering::SeqCst,
                     Ordering::Relaxed,
@@ -66,16 +66,12 @@ where
         let success = loop {
             match Iter::new(&self, guards).find_insert_position(value) {
                 Err(IterPos { prev, curr, next }) => {
-                    let delete_marker = unsafe {
-                        Shared::from_marked(MarkedPtr::compose(
-                            next.as_marked().decompose_ptr(),
-                            DELETE_TAG,
-                        ))
-                    };
+                    let delete_marker = next.marked_with_tag(DELETE_TAG);
 
-                    if unsafe { &curr.deref().next }
+                    if curr
+                        .next
                         .compare_exchange(
-                            next.strip_tag(),
+                            next.clear_tag(),
                             delete_marker,
                             Ordering::SeqCst,
                             Ordering::SeqCst,
@@ -86,8 +82,8 @@ where
                     }
 
                     match prev.compare_exchange(
-                        Shared::with_tag(curr, 0),
-                        next.strip_tag(),
+                        curr.with_tag(0),
+                        next.clear_tag(),
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     ) {
@@ -117,7 +113,7 @@ where
         let iter = Iter::new(&self, guards);
         match iter.find_insert_position(value) {
             Ok(_) => None,
-            Err(IterPos { curr, .. }) => unsafe { Some(&curr.deref().elem) },
+            Err(IterPos { curr, .. }) => Some(&curr.into_ref().elem),
         }
     }
 }
