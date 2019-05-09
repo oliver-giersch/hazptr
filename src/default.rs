@@ -4,7 +4,7 @@ use reclaim::typenum::Unsigned;
 use reclaim::{LocalReclaim, Protect, Reclaim};
 
 use crate::global::Global;
-use crate::hazard::{Hazard, HazardPtr};
+use crate::hazard::Hazard;
 use crate::local::{Local, LocalAccess, RecycleErr};
 use crate::{Guarded, Unlinked, HP};
 
@@ -41,8 +41,8 @@ pub struct DefaultAccess;
 
 impl LocalAccess for DefaultAccess {
     #[inline]
-    fn wrap_hazard(self, protect: NonNull<()>) -> HazardPtr<Self> {
-        LOCAL.with(|local| HazardPtr::new(Local::get_hazard(local, protect), DefaultAccess))
+    fn get_hazard(self, protect: NonNull<()>) -> &'static Hazard {
+        LOCAL.with(|local| Local::get_hazard(local, protect))
     }
 
     #[inline]

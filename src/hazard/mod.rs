@@ -17,11 +17,8 @@
 //! retired record, it has to ensure that no hazard pointer in this list still protects the retired
 //! value.
 
-use core::ops::Deref;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
-
-use crate::local::LocalAccess;
 
 mod list;
 
@@ -30,46 +27,6 @@ pub use self::list::{HazardList, Iter};
 const FREE: *mut () = 0 as *mut ();
 const SCOPED: *mut () = 1 as *mut ();
 const RESERVED: *mut () = 2 as *mut ();
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// HazardPtr
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// A wrapper for a global shared reference to a hazard that marks itself as reusable when
-/// it goes out of scope.
-#[derive(Debug)]
-pub struct HazardPtr<L: LocalAccess> {
-    hazard: &'static Hazard,
-    local_access: L,
-}
-
-impl<L: LocalAccess> HazardPtr<L> {
-    /// Creates a new hazard wrapper
-    #[inline]
-    pub fn new(hazard: &'static Hazard, local_access: L) -> Self {
-        Self { hazard, local_access }
-    }
-}
-
-impl<L: LocalAccess> Deref for HazardPtr<L> {
-    type Target = Hazard;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.hazard
-    }
-}
-
-impl<L: LocalAccess> Drop for HazardPtr<L> {
-    #[inline]
-    fn drop(&mut self) {
-        // try to store the hazard in the thread local cache or mark is as globally available
-        if self.local_access.try_recycle_hazard(self.hazard).is_err() {
-            // (HAZ:1) this `Release` store synchronizes-with the `Acquire` load (GUA:1)
-            self.hazard.set_free(Ordering::Release);
-        }
-    }
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Hazard

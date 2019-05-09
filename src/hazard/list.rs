@@ -52,7 +52,7 @@ use core::sync::atomic::{self, AtomicPtr, Ordering};
 #[cfg(not(feature = "std"))]
 use alloc::boxed::Box;
 
-use reclaim::align::CachePadded;
+use reclaim::align::CacheAligned;
 
 use crate::hazard::{Hazard, FREE};
 use crate::sanitize;
@@ -117,8 +117,8 @@ impl HazardList {
     #[inline]
     fn insert_back(&self, mut tail: &AtomicPtr<HazardNode>, protect: NonNull<()>) -> &Hazard {
         let node = Box::leak(Box::new(HazardNode {
-            hazard: CachePadded::new(Hazard::new(protect)),
-            next: CachePadded::new(AtomicPtr::default()),
+            hazard: CacheAligned(Hazard::new(protect)),
+            next: CacheAligned(AtomicPtr::default()),
         }));
 
         loop {
@@ -187,8 +187,8 @@ impl<'a> FusedIterator for Iter<'a> {}
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct HazardNode {
-    hazard: CachePadded<Hazard>,
-    next: CachePadded<AtomicPtr<HazardNode>>,
+    hazard: CacheAligned<Hazard>,
+    next: CacheAligned<AtomicPtr<HazardNode>>,
 }
 
 #[cfg(test)]

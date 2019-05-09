@@ -89,7 +89,7 @@ impl Retired {
     #[inline]
     pub unsafe fn new_unchecked<'a, T: 'a>(record: NonNull<T>) -> Self {
         // lifetime transmuting is sound when no non-static references are accessed during drop
-        let any: NonNull<dyn Any + 'a> = Record::get_record(record);
+        let any: NonNull<dyn Any + 'a> = Record::from_raw_non_null(record);
         let any: NonNull<dyn Any + 'static> = mem::transmute(any);
         Self(Box::from_raw(any.as_ptr()))
     }

@@ -11,7 +11,7 @@ use alloc::{boxed::Box, vec::Vec};
 use arrayvec::{ArrayVec, CapacityError};
 
 use crate::global::Global;
-use crate::hazard::{Hazard, HazardPtr, Protected};
+use crate::hazard::{Hazard, Protected};
 use crate::retired::{Retired, RetiredBag};
 use crate::sanitize;
 
@@ -184,8 +184,8 @@ pub trait LocalAccess
 where
     Self: Clone + Copy + Sized,
 {
-    /// Gets and Wraps a hazard in a [`HazardPtr`](crate::hazard::HazardPtr).
-    fn wrap_hazard(self, protect: NonNull<()>) -> HazardPtr<Self>;
+    /// Gets a hazard from local or global storage.
+    fn get_hazard(self, protect: NonNull<()>) -> &'static Hazard;
 
     /// Attempts to recycle `hazard` in the thread local cache for hazards reserved for the current
     /// thread.
@@ -205,8 +205,8 @@ where
 
 impl<'a> LocalAccess for &'a Local {
     #[inline]
-    fn wrap_hazard(self, protect: NonNull<()>) -> HazardPtr<Self> {
-        HazardPtr::new(Local::get_hazard(self, protect), self)
+    fn get_hazard(self, protect: NonNull<()>) -> &'static Hazard {
+        Local::get_hazard(self, protect)
     }
 
     #[inline]
