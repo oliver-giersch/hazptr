@@ -1,5 +1,5 @@
 use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::Ordering::{self, Relaxed, Release, SeqCst};
 
 use reclaim::prelude::*;
 use reclaim::typenum::Unsigned;
@@ -51,7 +51,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
 
     #[inline]
     fn acquire(&mut self, atomic: &Atomic<T, N>, order: Ordering) -> Marked<Shared<T, N>> {
-        match MarkedNonNull::new(atomic.load_raw(Ordering::Relaxed)) {
+        match MarkedNonNull::new(atomic.load_raw(Relaxed)) {
             Null(tag) => self.release_with_tag(tag),
             Value(ptr) => {
                 let mut protect = ptr.decompose_non_null();
@@ -73,7 +73,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
 
                             // (GUA:2) this `SeqCst` store synchronizes-with the
                             // `SeqCst` fence (GLO:1)
-                            hazard.set_protected(unmarked.cast(), Ordering::SeqCst);
+                            hazard.set_protected(unmarked.cast(), SeqCst);
                             protect = unmarked;
                         }
                     }
@@ -89,7 +89,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
         expected: MarkedPtr<T, N>,
         order: Ordering,
     ) -> AcquireResult<T, N> {
-        let raw = atomic.load_raw(Ordering::Relaxed);
+        let raw = atomic.load_raw(Relaxed);
         if raw != expected {
             return Err(NotEqual);
         }
@@ -101,7 +101,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
                 let hazard = self.unwrap_hazard_and_protect(unmarked.cast());
 
                 if atomic.load_raw(order) != ptr {
-                    hazard.set_scoped(Ordering::Release);
+                    hazard.set_scoped(Release);
                     return Err(NotEqual);
                 }
 
@@ -132,7 +132,7 @@ impl<T, L: LocalAccess, N: Unsigned> Guarded<T, L, N> {
 
         if let Some(hazard) = self.hazard {
             // (GUA:y) this `Release` store synchronizes-with ...
-            hazard.set_scoped(Ordering::Release);
+            hazard.set_scoped(Release);
         }
 
         self.marked = Null(tag);
@@ -143,7 +143,7 @@ impl<T, L: LocalAccess, N: Unsigned> Guarded<T, L, N> {
     fn unwrap_hazard_and_protect(&mut self, protect: NonNull<()>) -> &'static Hazard {
         match self.hazard.take() {
             Some(hazard) => {
-                hazard.set_protected(protect.cast(), Ordering::Release);
+                hazard.set_protected(protect.cast(), SeqCst);
                 self.hazard = Some(hazard);
                 hazard
             }
@@ -165,7 +165,7 @@ impl<T, L: LocalAccess, N: Unsigned> Drop for Guarded<T, L, N> {
             }
 
             if self.local_access.try_recycle_hazard(hazard).is_err() {
-                hazard.set_free(Ordering::Release);
+                hazard.set_free(Release);
             }
         }
     }

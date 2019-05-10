@@ -1,6 +1,6 @@
 use std::mem::{self, ManuallyDrop};
 use std::ptr;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 
 use hazptr::guarded;
 
@@ -8,11 +8,11 @@ type Atomic<T> = hazptr::Atomic<T, hazptr::typenum::U0>;
 type Owned<T> = hazptr::Owned<T, hazptr::typenum::U0>;
 
 #[derive(Default)]
-pub struct TreiberStack<T> {
+pub struct Stack<T> {
     head: Atomic<Node<T>>,
 }
 
-impl<T: 'static> TreiberStack<T> {
+impl<T: 'static> Stack<T> {
     #[inline]
     pub fn new() -> Self {
         Self { head: Atomic::null() }
@@ -24,10 +24,10 @@ impl<T: 'static> TreiberStack<T> {
         let mut guard = guarded();
 
         loop {
-            let head = self.head.load(Ordering::Relaxed, &mut guard);
-            node.next.store(head, Ordering::Relaxed);
-            match self.head.compare_exchange_weak(head, node, Ordering::Release, Ordering::Relaxed)
-            {
+            let head = self.head.load(Relaxed, &mut guard);
+            node.next.store(head, Relaxed);
+            // (TRE:1) this `Release` CAS synchronizes-with the `Acquire` load in (TRE:2)
+            match self.head.compare_exchange_weak(head, node, Release, Relaxed) {
                 Ok(_) => return,
                 Err(fail) => node = fail.input,
             }
@@ -38,13 +38,12 @@ impl<T: 'static> TreiberStack<T> {
     pub fn pop(&self) -> Option<T> {
         let mut guard = guarded();
 
-        while let Some(head) = self.head.load(Ordering::Acquire, &mut guard) {
-            //load
-            let next = head.next.load_unprotected(Ordering::Relaxed);
+        // (TRE:2) this `Acquire` load synchronizes with the `Release` CAS in (TRE:1)
+        while let Some(head) = self.head.load(Acquire, &mut guard) {
+            let next = head.next.load_unprotected(Relaxed);
 
-            if let Ok(unlinked) =
-                self.head.compare_exchange_weak(head, next, Ordering::Release, Ordering::Relaxed)
-            {
+            // (TRE:3) this `Release` CAS synchronizes-with the `Acquire` load in (TRE:2)
+            if let Ok(unlinked) = self.head.compare_exchange_weak(head, next, Release, Relaxed) {
                 unsafe {
                     let res = ptr::read(&*unlinked.elem);
                     unlinked.retire();
@@ -58,7 +57,7 @@ impl<T: 'static> TreiberStack<T> {
     }
 }
 
-impl<T> Drop for TreiberStack<T> {
+impl<T> Drop for Stack<T> {
     fn drop(&mut self) {
         let mut curr = self.head.take();
 
@@ -71,12 +70,14 @@ impl<T> Drop for TreiberStack<T> {
     }
 }
 
+#[derive(Debug)]
 struct Node<T> {
     elem: ManuallyDrop<T>,
     next: Atomic<Node<T>>,
 }
 
 impl<T> Node<T> {
+    #[inline]
     fn new(elem: T) -> Self {
         Self { elem: ManuallyDrop::new(elem), next: Atomic::null() }
     }

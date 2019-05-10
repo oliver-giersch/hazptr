@@ -3,7 +3,7 @@ use std::cmp::Ordering::{Equal, Greater};
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed};
 
 use hazptr::reclaim::prelude::*;
 
@@ -50,7 +50,6 @@ where
     pub fn new(set: &'set OrderedSet<T>, guards: &'g mut Guards<T>) -> Self {
         // this is safe because no references with "faked" lifetimes can escape
         let prev: &'g Atomic<Node<T>> = unsafe { &*(&set.head as *const _) };
-
         Self { head: &set.head, prev, next: prev, guards }
     }
 
@@ -83,7 +82,9 @@ where
         self.prev = self.next;
         mem::swap(&mut self.guards.prev, &mut self.guards.curr);
 
-        match self.guards.curr.acquire(self.prev, Ordering::SeqCst) {
+        // (ITE:1) this `Acquire` load synchronizes-with the `Release` CAS in (ORD:1) and the
+        // `AcqRel` CAS in (ITE:3) and (ORD:3)
+        match self.guards.curr.acquire(self.prev, Acquire) {
             Value(curr) => {
                 if curr.decompose_tag() == DELETE_TAG {
                     return self.retry();
@@ -92,20 +93,22 @@ where
                 let curr_next: &'g Atomic<Node<T>> =
                     unsafe { &(*curr.as_marked_ptr().decompose_ptr()).next };
 
-                let next_raw = curr_next.load_raw(Ordering::Relaxed);
-                match self.guards.next.acquire_if_equal(curr_next, next_raw, Ordering::SeqCst) {
+                let next_raw = curr_next.load_raw(Relaxed);
+                // (ITE:2) this `Acquire` load synchronizes-with `Release` CAS in (ORD:1) and the
+                // `AcqRel` CAS in (ITE:3) and (ORD:3)
+                match self.guards.next.acquire_if_equal(curr_next, next_raw, Acquire) {
                     Ok(maybe_next) => {
-                        if self.prev.load_raw(Ordering::SeqCst) != curr.clear_tag().as_marked_ptr()
-                        {
+                        if self.prev.load_raw(Relaxed) != curr.clear_tag().as_marked_ptr() {
                             return self.retry();
                         }
 
                         if maybe_next.decompose_tag() == DELETE_TAG {
+                            // (ITE:3) this `AcqRel` CAS synchronizes-with ...
                             match self.prev.compare_exchange(
                                 curr.clear_tag(),
                                 maybe_next.clear_tag(),
-                                Ordering::SeqCst,
-                                Ordering::SeqCst,
+                                AcqRel,
+                                Relaxed,
                             ) {
                                 Ok(unlinked) => {
                                     unsafe { unlinked.retire() };
@@ -166,11 +169,12 @@ pub struct IterPos<'g, 'set, T> {
 // Prev
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// A type to mimic the fact that the reference to the previous node may have to different lifetimes
-/// so the shorter one (`'set`) is chosen, while also ensuring the the hazard pointers (`'g`) remain
-/// borrowed as well.
-/// Otherwise, a reference that is not the head of the set could be freed when the guard is used to
-/// acquire a different value, forfeiting its protection of the reference.
+/// A type to mimic the fact that the reference to the previous node may have
+/// two different lifetimes, so the shorter one (`'set`) is chosen, while also
+/// ensuring the the hazard pointers (`'g`) remain borrowed as well.
+/// Otherwise, a reference that is not the head of the set could be freed when
+/// the guard is used to acquire a different value, forfeiting its protection of
+/// the reference.
 #[derive(Copy, Clone, Debug)]
 pub struct Prev<'g, 'set, T> {
     inner: &'set Atomic<Node<T>>,
@@ -203,7 +207,6 @@ where
 // IterErr
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// TODO: Doc...
 #[derive(Debug)]
 enum IterErr {
     Retry,

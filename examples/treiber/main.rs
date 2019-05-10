@@ -7,7 +7,7 @@ use std::thread;
 
 mod stack;
 
-use crate::stack::TreiberStack;
+use crate::stack::Stack;
 
 #[repr(align(64))]
 struct ThreadCount(AtomicUsize);
@@ -33,7 +33,7 @@ fn main() {
         ThreadCount(AtomicUsize::new(0)),
     ];
 
-    let stack = Arc::new(TreiberStack::new());
+    let stack = Arc::new(Stack::new());
     let handles: Vec<_> = (0..THREADS)
         .map(|id| {
             let stack = Arc::clone(&stack);

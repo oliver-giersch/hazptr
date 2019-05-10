@@ -1,5 +1,6 @@
 use std::borrow::Borrow;
-use std::sync::atomic::Ordering;
+use std::mem;
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
 
 pub type Atomic<T> = hazptr::Atomic<T, typenum::U1>;
 pub type Guarded<T> = hazptr::Guarded<T, typenum::U1>;
@@ -7,7 +8,6 @@ pub type Owned<T> = hazptr::Owned<T, typenum::U1>;
 pub type Shared<'g, T> = hazptr::Shared<'g, T, typenum::U1>;
 
 use hazptr::reclaim::prelude::*;
-use hazptr::reclaim::MarkedPtr;
 use hazptr::typenum;
 
 mod iter;
@@ -35,16 +35,12 @@ where
         let success = loop {
             let elem = &node.elem;
             if let Ok((pos, next)) = Iter::new(&self, guards).find_insert_position(elem) {
-                node.next.store(next.clear_tag(), Ordering::Relaxed);
-                // (ORD:2) this `Release` CAS synchronizes-with ...
-                match pos.compare_exchange(
-                    next.clear_tag(),
-                    node,
-                    Ordering::SeqCst,
-                    Ordering::Relaxed,
-                ) {
+                node.next.store(next.clear_tag(), Relaxed);
+                // (ORD:1) this `Release` CAS synchronizes-with the `Acquire` loads in (ITE:1) and
+                // (ITE:2) and the `AcqRel` CAS in (ORD:3) and (ITE:3)
+                match pos.compare_exchange(next.clear_tag(), node, Release, Relaxed) {
                     Ok(_) => break true,
-                    Err(fail) => node = fail.input,
+                    Err(failure) => node = failure.input,
                 }
             } else {
                 break false;
@@ -68,27 +64,22 @@ where
                 Err(IterPos { prev, curr, next }) => {
                     let delete_marker = next.marked_with_tag(DELETE_TAG);
 
+                    // (ORD:2) this `Release` CAS synchronizes-with the `Acquire` loads in (ITE:1)
+                    // and (ITE:2) and the `AcqRel` CAS in (ORD:3), (ITE:3)
                     if curr
                         .next
-                        .compare_exchange(
-                            next.clear_tag(),
-                            delete_marker,
-                            Ordering::SeqCst,
-                            Ordering::SeqCst,
-                        )
+                        .compare_exchange(next.clear_tag(), delete_marker, Release, Relaxed)
                         .is_err()
                     {
                         continue;
                     }
 
-                    match prev.compare_exchange(
-                        curr.with_tag(0),
-                        next.clear_tag(),
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    ) {
+                    // (ORD:3) this `AcqRel` CAS synchronizes-with the `Acquire` loads in (ITE:1)
+                    // and (ITE:2)
+                    match prev.compare_exchange(curr.with_tag(0), next.clear_tag(), AcqRel, Acquire)
+                    {
                         Ok(unlinked) => unsafe { unlinked.retire() },
-                        _ => {
+                        Err(_) => {
                             let _ = Iter::new(&self, guards).find_insert_position(value);
                         }
                     }
@@ -110,8 +101,7 @@ where
         T: Borrow<Q>,
         Q: Ord,
     {
-        let iter = Iter::new(&self, guards);
-        match iter.find_insert_position(value) {
+        match Iter::new(&self, guards).find_insert_position(value) {
             Ok(_) => None,
             Err(IterPos { curr, .. }) => Some(&curr.into_ref().elem),
         }
@@ -124,12 +114,8 @@ impl<T> Drop for OrderedSet<T> {
         let mut node = self.head.take();
 
         while let Some(mut curr) = node {
-            // must not transform invalid value into an Option<Owned> (likely UB)
-            if curr.next.load_raw(Ordering::Relaxed).into_usize() == DELETE_TAG {
-                return;
-            } else {
-                node = curr.next.take();
-            }
+            node = curr.next.take();
+            mem::drop(curr);
         }
     }
 }
