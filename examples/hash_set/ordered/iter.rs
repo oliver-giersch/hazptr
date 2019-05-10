@@ -3,7 +3,7 @@ use std::cmp::Ordering::{Equal, Greater};
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 
 use hazptr::reclaim::prelude::*;
 
@@ -82,8 +82,7 @@ where
         self.prev = self.next;
         mem::swap(&mut self.guards.prev, &mut self.guards.curr);
 
-        // (ITE:1) this `Acquire` load synchronizes-with the `Release` CAS in (ORD:1) and the
-        // `AcqRel` CAS in (ITE:3) and (ORD:3)
+        // (ITE:1) this `Acquire` load synchronizes-with the ...
         match self.guards.curr.acquire(self.prev, Acquire) {
             Value(curr) => {
                 if curr.decompose_tag() == DELETE_TAG {
@@ -94,8 +93,7 @@ where
                     unsafe { &(*curr.as_marked_ptr().decompose_ptr()).next };
 
                 let next_raw = curr_next.load_raw(Relaxed);
-                // (ITE:2) this `Acquire` load synchronizes-with `Release` CAS in (ORD:1) and the
-                // `AcqRel` CAS in (ITE:3) and (ORD:3)
+                // (ITE:2) this `Acquire` load synchronizes-with the ...
                 match self.guards.next.acquire_if_equal(curr_next, next_raw, Acquire) {
                     Ok(maybe_next) => {
                         if self.prev.load_raw(Relaxed) != curr.clear_tag().as_marked_ptr() {
@@ -103,11 +101,11 @@ where
                         }
 
                         if maybe_next.decompose_tag() == DELETE_TAG {
-                            // (ITE:3) this `AcqRel` CAS synchronizes-with ...
+                            // (ITE:3) this `...` CAS synchronizes-with the ...
                             match self.prev.compare_exchange(
                                 curr.clear_tag(),
                                 maybe_next.clear_tag(),
-                                AcqRel,
+                                Release,
                                 Relaxed,
                             ) {
                                 Ok(unlinked) => {

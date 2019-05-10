@@ -1,21 +1,23 @@
-//! Data structures and functionality for temporarily protecting specific pointers acquired by
-//! specific threads from concurrent reclamation.
+//! Data structures and functionality for temporarily protecting specific
+//! pointers acquired by specific threads from concurrent reclamation.
 //!
 //! # Global List
 //!
-//! All hazard pointers are stored in a global linked list. This list can never remove and
-//! deallocate any of its entries, since this would require some scheme for concurrent memory
-//! reclamation on its own. Consequently, this linked list can only grow during the entire program
-//! runtime and is never actually dropped. However, its individual entries can be reused arbitrarily
+//! All hazard pointers are stored in a global linked list. This list can never
+//! remove and deallocate any of its entries, since this would require some
+//! scheme for concurrent memory reclamation on its own. Consequently, this
+//! linked list can only grow for the entire program runtime and is never
+//! actually dropped. However, its individual entries can be reused arbitrarily
 //! often.
 //!
 //! # Hazard Pointers
 //!
-//! Whenever a thread reads a value in a data structure from shared memory it has to acquire a
-//! hazard pointer for it before the loaded reference to the value can be safely dereferenced. These
-//! pointers are stored in the global list of hazard pointers. Any time a thread wants to reclaim a
-//! retired record, it has to ensure that no hazard pointer in this list still protects the retired
-//! value.
+//! Whenever a thread reads a value in a data structure from shared memory it
+//! has to acquire a hazard pointer for it before the loaded reference to the
+//! value can be safely dereferenced. These pointers are stored in the global
+//! list of hazard pointers. Any time a thread wants to reclaim a retired
+//! record, it has to ensure that no hazard pointer in this list still protects
+//! the retired value.
 
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};

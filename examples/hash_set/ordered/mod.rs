@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 use std::mem;
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 
 pub type Atomic<T> = hazptr::Atomic<T, typenum::U1>;
 pub type Guarded<T> = hazptr::Guarded<T, typenum::U1>;
@@ -36,8 +36,7 @@ where
             let elem = &node.elem;
             if let Ok((pos, next)) = Iter::new(&self, guards).find_insert_position(elem) {
                 node.next.store(next.clear_tag(), Relaxed);
-                // (ORD:1) this `Release` CAS synchronizes-with the `Acquire` loads in (ITE:1) and
-                // (ITE:2) and the `AcqRel` CAS in (ORD:3) and (ITE:3)
+                // (ORD:1) this `Release` CAS synchronizes-with the ...
                 match pos.compare_exchange(next.clear_tag(), node, Release, Relaxed) {
                     Ok(_) => break true,
                     Err(failure) => node = failure.input,
@@ -63,9 +62,7 @@ where
             match Iter::new(&self, guards).find_insert_position(value) {
                 Err(IterPos { prev, curr, next }) => {
                     let delete_marker = next.marked_with_tag(DELETE_TAG);
-
-                    // (ORD:2) this `Release` CAS synchronizes-with the `Acquire` loads in (ITE:1)
-                    // and (ITE:2) and the `AcqRel` CAS in (ORD:3), (ITE:3)
+                    // (ORD:2) this `...` CAS synchronizes-with ... FIXME: `Acquire`?
                     if curr
                         .next
                         .compare_exchange(next.clear_tag(), delete_marker, Release, Relaxed)
@@ -74,10 +71,13 @@ where
                         continue;
                     }
 
-                    // (ORD:3) this `AcqRel` CAS synchronizes-with the `Acquire` loads in (ITE:1)
-                    // and (ITE:2)
-                    match prev.compare_exchange(curr.with_tag(0), next.clear_tag(), AcqRel, Acquire)
-                    {
+                    // (ORD:3) this `...` CAS synchronizes-with ...
+                    match prev.compare_exchange(
+                        curr.with_tag(0),
+                        next.clear_tag(),
+                        Release,
+                        Relaxed,
+                    ) {
                         Ok(unlinked) => unsafe { unlinked.retire() },
                         Err(_) => {
                             let _ = Iter::new(&self, guards).find_insert_position(value);
