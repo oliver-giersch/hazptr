@@ -82,7 +82,7 @@ where
         self.prev = self.next;
         mem::swap(&mut self.guards.prev, &mut self.guards.curr);
 
-        // (ITE:1) this `Acquire` load synchronizes-with the ...
+        // (ITE:1) this `Acquire` load synchronizes-with the `Release` CAS (ITE:3),
         match self.guards.curr.acquire(self.prev, Acquire) {
             Value(curr) => {
                 if curr.decompose_tag() == DELETE_TAG {
@@ -101,7 +101,8 @@ where
                         }
 
                         if maybe_next.decompose_tag() == DELETE_TAG {
-                            // (ITE:3) this `...` CAS synchronizes-with the ...
+                            // (ITE:3) this `Release` CAS synchronizes-with the `Acquire` loads
+                            // (ITE:1), (ITE:2) and the `Acquire` CAS (ORD:2)
                             match self.prev.compare_exchange(
                                 curr.clear_tag(),
                                 maybe_next.clear_tag(),
