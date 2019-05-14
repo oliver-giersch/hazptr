@@ -109,7 +109,7 @@ pub use reclaim;
 pub use reclaim::typenum;
 
 use cfg_if::cfg_if;
-use reclaim::LocalReclaim;
+use reclaim::prelude::*;
 use typenum::Unsigned;
 
 /// Atomic pointer that must be either `null` or valid. Loads of non-null values must acquire hazard

@@ -6,6 +6,7 @@ pub type Atomic<T> = hazptr::Atomic<T, typenum::U1>;
 pub type Guarded<T> = hazptr::Guarded<T, typenum::U1>;
 pub type Owned<T> = hazptr::Owned<T, typenum::U1>;
 pub type Shared<'g, T> = hazptr::Shared<'g, T, typenum::U1>;
+type Unlinked<T> = hazptr::Unlinked<T, typenum::U1>;
 
 use hazptr::reclaim::prelude::*;
 use hazptr::typenum;
@@ -35,10 +36,11 @@ where
         let success = loop {
             let elem = &node.elem;
             if let Ok((pos, next)) = Iter::new(&self, guards).find_insert_position(elem) {
-                node.next.store(next.clear_tag(), Relaxed);
+                let next_clear = MarkedPointer::clear_tag(next);
+                node.next.store(next_clear, Relaxed);
                 // (ORD:1) this `Release` CAS synchronizes-with the `Acquire` loads (ITE:1), (ITE:2)
                 // and the `Acquire` CAS (ORD:2)
-                match pos.compare_exchange(next.clear_tag(), node, Release, Relaxed) {
+                match pos.compare_exchange(next_clear, node, Release, Relaxed) {
                     Ok(_) => break true,
                     Err(failure) => node = failure.input,
                 }
@@ -63,10 +65,11 @@ where
             match Iter::new(&self, guards).find_insert_position(value) {
                 Ok(_) => break false,
                 Err(IterPos { prev, curr, next }) => {
-                    let delete_marker = next.marked_with_tag(DELETE_TAG);
+                    let next_clear = Marked::clear_tag(next);
+                    let delete_marker = Marked::with_tag(next, DELETE_TAG);
                     if curr
                         .next
-                        .compare_exchange(next.clear_tag(), delete_marker, Relaxed, Relaxed)
+                        .compare_exchange(next_clear, delete_marker, Relaxed, Relaxed)
                         .is_err()
                     {
                         continue;
@@ -74,9 +77,13 @@ where
 
                     // (ORD:3) this `AcqRel` CAS synchronizes-with the `Acquire` loads (ITE:1),
                     // (ITE2) and the `Release` CAS (ITE:3), (ORD:1)
-                    match prev.compare_exchange(curr.with_tag(0), next.clear_tag(), AcqRel, Relaxed)
-                    {
-                        Ok(unlinked) => unsafe { unlinked.retire() },
+                    match prev.compare_exchange(
+                        Shared::clear_tag(curr),
+                        next_clear,
+                        AcqRel,
+                        Relaxed,
+                    ) {
+                        Ok(unlinked) => unsafe { Unlinked::retire(unlinked) },
                         Err(_) => {
                             let _ = Iter::new(&self, guards).find_insert_position(value);
                         }

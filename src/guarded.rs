@@ -3,7 +3,7 @@ use core::sync::atomic::Ordering::{self, Relaxed, Release, SeqCst};
 
 use reclaim::prelude::*;
 use reclaim::typenum::Unsigned;
-use reclaim::{MarkedNonNull, MarkedPtr, NotEqual};
+use reclaim::{MarkedNonNull, MarkedPtr, NotEqualError};
 
 use crate::hazard::Hazard;
 use crate::local::LocalAccess;
@@ -91,7 +91,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
     ) -> AcquireResult<T, N> {
         let raw = atomic.load_raw(Relaxed);
         if raw != expected {
-            return Err(NotEqual);
+            return Err(NotEqualError);
         }
 
         match MarkedNonNull::new(raw) {
@@ -102,7 +102,7 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
 
                 if atomic.load_raw(order) != ptr {
                     hazard.set_scoped(Release);
-                    return Err(NotEqual);
+                    return Err(NotEqualError);
                 }
 
                 self.marked = Value(ptr);
@@ -182,6 +182,7 @@ mod tests {
 
     use crate::global::Global;
     use crate::local::Local;
+    use crate::Shared;
 
     type Atomic = crate::Atomic<i32, U0>;
     type Owned = crate::Owned<i32, U0>;
@@ -241,7 +242,7 @@ mod tests {
         assert!(guarded.shared().is_none());
 
         let owned = Owned::new(1);
-        let marked = owned.as_marked_ptr();
+        let marked = Owned::as_marked_ptr(&owned);
         let atomic = Atomic::from(owned);
 
         let res = guarded.acquire_if_equal(&atomic, null, Ordering::Relaxed);
@@ -255,7 +256,7 @@ mod tests {
         let shared = guarded.shared().unwrap();
         assert_eq!(shared.as_ref(), &1);
         assert_eq!(
-            shared.into_marked_ptr().into_usize(),
+            Shared::into_marked_ptr(shared).into_usize(),
             guarded.hazard.unwrap().protected(Ordering::Relaxed).unwrap().address()
         );
 

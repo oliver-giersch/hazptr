@@ -7,7 +7,8 @@ use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 
 use hazptr::reclaim::prelude::*;
 
-use crate::ordered::{Atomic, Guards, OrderedSet, Shared, DELETE_TAG};
+use crate::ordered::{Atomic, Guards, OrderedSet, Shared, Unlinked, DELETE_TAG};
+use reclaim::MarkedPtr;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Node
@@ -85,32 +86,33 @@ where
         // (ITE:1) this `Acquire` load synchronizes-with the `Release` CAS (ITE:3),
         match self.guards.curr.acquire(self.prev, Acquire) {
             Value(curr) => {
-                if curr.decompose_tag() == DELETE_TAG {
+                let (curr_ptr, curr_tag) = Shared::as_marked_ptr(&curr).decompose();
+                if curr_tag == DELETE_TAG {
                     return self.retry();
                 }
 
-                let curr_next: &'g Atomic<Node<T>> =
-                    unsafe { &(*curr.as_marked_ptr().decompose_ptr()).next };
-
+                let curr_next: &'g Atomic<Node<T>> = unsafe { &(*curr_ptr).next };
                 let next_raw = curr_next.load_raw(Relaxed);
                 // (ITE:2) this `Acquire` load synchronizes-with the ...
                 match self.guards.next.acquire_if_equal(curr_next, next_raw, Acquire) {
                     Ok(maybe_next) => {
-                        if self.prev.load_raw(Relaxed) != curr.clear_tag().as_marked_ptr() {
+                        // FIXME (reclaim): Could be nicer...
+                        if self.prev.load_raw(Relaxed) != MarkedPtr::compose(curr_ptr, 0) {
                             return self.retry();
                         }
 
-                        if maybe_next.decompose_tag() == DELETE_TAG {
+                        // FIXME (reclaim): Marked should have an inherent decompose_tag method
+                        if Marked::as_marked_ptr(&maybe_next).decompose_tag() == DELETE_TAG {
                             // (ITE:3) this `Release` CAS synchronizes-with the `Acquire` loads
                             // (ITE:1), (ITE:2) and the `Acquire` CAS (ORD:2)
                             match self.prev.compare_exchange(
-                                curr.clear_tag(),
-                                maybe_next.clear_tag(),
+                                Shared::clear_tag(curr),
+                                Marked::clear_tag(maybe_next),
                                 Release,
                                 Relaxed,
                             ) {
                                 Ok(unlinked) => {
-                                    unsafe { unlinked.retire() };
+                                    unsafe { Unlinked::retire(unlinked) };
                                     mem::swap(&mut self.guards.prev, &mut self.guards.curr);
 
                                     return Some(Err(IterErr::Stalled));
