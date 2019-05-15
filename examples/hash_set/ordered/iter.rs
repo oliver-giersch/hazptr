@@ -33,7 +33,7 @@ impl<T> Node<T> {
 // Iter
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// TODO: Doc...
+/// An Iterator over an [`OrderedSet`].
 pub struct Iter<'g, 'set, T> {
     head: &'set Atomic<Node<T>>,
     prev: &'g Atomic<Node<T>>,
@@ -46,7 +46,7 @@ where
     T: 'static,
     'g: 'set,
 {
-    /// TODO: Doc...
+    /// Creates a new `Iter` over the specified `set`.
     #[inline]
     pub fn new(set: &'set OrderedSet<T>, guards: &'g mut Guards<T>) -> Self {
         // this is safe because no references with "faked" lifetimes can escape
@@ -54,7 +54,15 @@ where
         Self { head: &set.head, prev, next: prev, guards }
     }
 
-    /// TODO: Doc...
+    /// Consumes the `Iter` and iterates until a position is found, at which the
+    /// given `insert` value could be inserted so that the ordering of the set
+    /// is kept intact.
+    ///
+    /// # Errors
+    ///
+    /// When a value equal to `insert` is already contained in the set, an error
+    /// with the position is returned, in which `curr` is the node with the
+    /// found value.
     #[inline]
     pub fn find_insert_position<Q>(
         mut self,
@@ -78,7 +86,6 @@ where
         Ok((self.prev, self.guards.curr.shared()))
     }
 
-    /// TODO: Doc...
     fn next(&mut self) -> Option<Result<IterPos<T>, IterErr>> {
         self.prev = self.next;
         mem::swap(&mut self.guards.prev, &mut self.guards.curr);
@@ -86,28 +93,30 @@ where
         // (ITE:1) this `Acquire` load synchronizes-with the `Release` CAS (ITE:3),
         match self.guards.curr.acquire(self.prev, Acquire) {
             Value(curr) => {
-                let (curr_ptr, curr_tag) = Shared::as_marked_ptr(&curr).decompose();
+                let (curr_ptr, curr_tag) = curr.as_marked_ptr().decompose();
                 if curr_tag == DELETE_TAG {
                     return self.retry();
                 }
 
+                // This is safe, because `curr` is guarded by `guards.curr` and its lifetime is at
+                // least `'g` as long as the guard is not used to acquire another value.
+                // Before acquiring a new value with `guards.curr` in the next iteration,
+                // `guards.prev` is used to protect its value.
                 let curr_next: &'g Atomic<Node<T>> = unsafe { &(*curr_ptr).next };
                 let next_raw = curr_next.load_raw(Relaxed);
                 // (ITE:2) this `Acquire` load synchronizes-with the ...
                 match self.guards.next.acquire_if_equal(curr_next, next_raw, Acquire) {
                     Ok(maybe_next) => {
-                        // FIXME (reclaim): Could be nicer...
-                        if self.prev.load_raw(Relaxed) != MarkedPtr::compose(curr_ptr, 0) {
+                        if self.prev.load_raw(Relaxed) != MarkedPtr::new(curr_ptr) {
                             return self.retry();
                         }
 
-                        // FIXME (reclaim): Marked should have an inherent decompose_tag method
-                        if Marked::as_marked_ptr(&maybe_next).decompose_tag() == DELETE_TAG {
+                        if maybe_next.as_marked_ptr().decompose_tag() == DELETE_TAG {
                             // (ITE:3) this `Release` CAS synchronizes-with the `Acquire` loads
                             // (ITE:1), (ITE:2) and the `Acquire` CAS (ORD:2)
                             match self.prev.compare_exchange(
-                                Shared::clear_tag(curr),
-                                Marked::clear_tag(maybe_next),
+                                Shared::unmarked(curr),
+                                Marked::unmarked(maybe_next),
                                 Release,
                                 Relaxed,
                             ) {
@@ -117,7 +126,7 @@ where
 
                                     return Some(Err(IterErr::Stalled));
                                 }
-                                _ => self.retry(),
+                                Err(_) => self.retry(),
                             };
                         }
 
@@ -136,7 +145,7 @@ where
         }
     }
 
-    /// TODO: Doc...
+    /// Consumes the `Iter` and returns its current position.
     #[inline]
     fn into_iter_pos(self) -> IterPos<'g, 'set, T> {
         IterPos {
@@ -146,7 +155,6 @@ where
         }
     }
 
-    /// TODO: Doc...
     #[inline]
     fn retry(&mut self) -> Option<Result<IterPos<T>, IterErr>> {
         // this is safe because no references with "faked" lifetimes can escape
@@ -155,10 +163,11 @@ where
     }
 }
 
-/// TODO: Doc...
+/// A position in a set consisting of a `prev` reference and a `next` node,
+/// in between which a new node can be inserted.
 type InsertPos<'g, T> = (&'g Atomic<Node<T>>, Option<Shared<'g, Node<T>>>);
 
-/// TODO: Doc...
+/// A position of a set iterator.
 #[derive(Debug)]
 pub struct IterPos<'g, 'set, T> {
     pub prev: Prev<'g, 'set, T>,
