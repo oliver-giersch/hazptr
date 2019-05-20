@@ -36,11 +36,10 @@ where
         let success = loop {
             let elem = &node.elem;
             if let Ok((pos, next)) = Iter::new(&self, guards).find_insert_position(elem) {
-                let next_clear = Option::unmarked(next);
-                node.next.store(next_clear, Relaxed);
+                node.next.store(next, Relaxed);
                 // (ORD:1) this `Release` CAS synchronizes-with the `Acquire` loads (ITE:1), (ITE:2)
                 // and the `Acquire` CAS (ORD:2)
-                match pos.compare_exchange(next_clear, node, Release, Relaxed) {
+                match pos.compare_exchange(next, node, Release, Relaxed) {
                     Ok(_) => break true,
                     Err(failure) => node = failure.input,
                 }
@@ -65,20 +64,14 @@ where
             match Iter::new(&self, guards).find_insert_position(value) {
                 Ok(_) => break false,
                 Err(IterPos { prev, curr, next }) => {
-                    let next_clear = Marked::unmarked(next);
-                    let delete_marker = Marked::marked(next, DELETE_TAG);
-                    if curr
-                        .next
-                        .compare_exchange(next_clear, delete_marker, Relaxed, Relaxed)
-                        .is_err()
-                    {
+                    let next_marked = Marked::marked(next, DELETE_TAG);
+                    if curr.next.compare_exchange(next, next_marked, Relaxed, Relaxed).is_err() {
                         continue;
                     }
 
                     // (ORD:3) this `AcqRel` CAS synchronizes-with the `Acquire` loads (ITE:1),
                     // (ITE2) and the `Release` CAS (ITE:3), (ORD:1)
-                    match prev.compare_exchange(Shared::unmarked(curr), next_clear, AcqRel, Relaxed)
-                    {
+                    match prev.compare_exchange(curr, next, AcqRel, Relaxed) {
                         Ok(unlinked) => unsafe { Unlinked::retire(unlinked) },
                         Err(_) => {
                             let _ = Iter::new(&self, guards).find_insert_position(value);
@@ -103,7 +96,7 @@ where
     {
         match Iter::new(&self, guards).find_insert_position(value) {
             Ok(_) => None,
-            Err(IterPos { curr, .. }) => Some(&curr.into_ref().elem),
+            Err(IterPos { curr, .. }) => Some(&Shared::into_ref(curr).elem),
         }
     }
 }
@@ -112,7 +105,6 @@ impl<T> Drop for OrderedSet<T> {
     #[inline]
     fn drop(&mut self) {
         let mut node = self.head.take();
-
         while let Some(mut curr) = node {
             node = curr.next.take();
             mem::drop(curr);

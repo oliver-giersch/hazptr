@@ -8,7 +8,6 @@ use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use hazptr::reclaim::prelude::*;
 
 use crate::ordered::{Atomic, Guards, OrderedSet, Shared, Unlinked, DELETE_TAG};
-use reclaim::MarkedPtr;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Node
@@ -92,8 +91,8 @@ where
 
         // (ITE:1) this `Acquire` load synchronizes-with the `Release` CAS (ITE:3),
         match self.guards.curr.acquire(self.prev, Acquire) {
-            Value(curr) => {
-                let (curr_ptr, curr_tag) = curr.as_marked_ptr().decompose();
+            Value(curr_marked) => {
+                let (curr, curr_tag) = Shared::decompose(curr_marked);
                 if curr_tag == DELETE_TAG {
                     return self.retry();
                 }
@@ -102,24 +101,21 @@ where
                 // least `'g` as long as the guard is not used to acquire another value.
                 // Before acquiring a new value with `guards.curr` in the next iteration,
                 // `guards.prev` is used to protect its value.
-                let curr_next: &'g Atomic<Node<T>> = unsafe { &(*curr_ptr).next };
+                let curr_next: &'g Atomic<Node<T>> =
+                    unsafe { &(*curr.as_marked_ptr().decompose_ptr()).next };
                 let next_raw = curr_next.load_raw(Relaxed);
                 // (ITE:2) this `Acquire` load synchronizes-with the ...
                 match self.guards.next.acquire_if_equal(curr_next, next_raw, Acquire) {
-                    Ok(maybe_next) => {
-                        if self.prev.load_raw(Relaxed) != MarkedPtr::new(curr_ptr) {
+                    Ok(next_marked) => {
+                        if self.prev.load_raw(Relaxed) != curr.as_marked_ptr() {
                             return self.retry();
                         }
 
-                        if maybe_next.as_marked_ptr().decompose_tag() == DELETE_TAG {
+                        let (next, next_tag) = MarkedPointer::decompose(next_marked);
+                        if next_tag == DELETE_TAG {
                             // (ITE:3) this `Release` CAS synchronizes-with the `Acquire` loads
                             // (ITE:1), (ITE:2) and the `Acquire` CAS (ORD:2)
-                            match self.prev.compare_exchange(
-                                Shared::unmarked(curr),
-                                Marked::unmarked(maybe_next),
-                                Release,
-                                Relaxed,
-                            ) {
+                            match self.prev.compare_exchange(curr, next, Release, Relaxed) {
                                 Ok(unlinked) => {
                                     unsafe { Unlinked::retire(unlinked) };
                                     mem::swap(&mut self.guards.prev, &mut self.guards.curr);

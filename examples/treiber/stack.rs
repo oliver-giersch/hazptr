@@ -6,6 +6,7 @@ use hazptr::guarded;
 
 type Atomic<T> = hazptr::Atomic<T, hazptr::typenum::U0>;
 type Owned<T> = hazptr::Owned<T, hazptr::typenum::U0>;
+type Unlinked<T> = hazptr::Unlinked<T, hazptr::typenum::U0>;
 
 #[derive(Default)]
 pub struct Stack<T> {
@@ -46,7 +47,7 @@ impl<T: 'static> Stack<T> {
             if let Ok(unlinked) = self.head.compare_exchange_weak(head, next, Release, Relaxed) {
                 unsafe {
                     let res = ptr::read(&*unlinked.elem);
-                    unlinked.retire();
+                    Unlinked::retire(unlinked);
 
                     return Some(res);
                 }
