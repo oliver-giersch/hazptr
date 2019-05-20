@@ -119,17 +119,19 @@ use cfg_if::cfg_if;
 use reclaim::prelude::*;
 use typenum::Unsigned;
 
-/// Atomic pointer that must be either `null` or valid. Loads of non-null values must acquire hazard
-/// pointers and are hence protected from reclamation.
+/// Atomic pointer that must be either `null` or valid. Loads of non-null values
+/// must acquire hazard pointers and are hence protected from reclamation.
 pub type Atomic<T, N> = reclaim::Atomic<T, HP, N>;
-/// Shared reference to a value loaded from shared memory that is protected by a hazard pointer.
+/// Shared reference to a value loaded from shared memory that is protected by a
+/// hazard pointer.
 pub type Shared<'g, T, N> = reclaim::Shared<'g, T, HP, N>;
 /// A pointer type for heap allocation like `Box` that can be marked.
 pub type Owned<T, N> = reclaim::Owned<T, HP, N>;
-/// Unique reference to a value that has been successfully unlinked and can be retired.
+/// Unique reference to a value that has been successfully unlinked and can be
+/// retired.
 pub type Unlinked<T, N> = reclaim::Unlinked<T, HP, N>;
-/// Shared reference to a value loaded from shared memory that is **not** safe to dereference and
-/// could be reclaimed at any point.
+/// Shared reference to a value loaded from shared memory that is **not** safe
+/// to dereference and could be reclaimed at any point.
 pub type Unprotected<T, N> = reclaim::Unprotected<T, HP, N>;
 
 #[cfg(feature = "std")]
@@ -151,10 +153,12 @@ cfg_if! {
             global::Global,
             local::{Local, RecycleErr},
         };
-        /// A **thread local** guarded pointer that can be used to acquire hazard pointers.
+        /// A **thread local** guarded pointer that can be used to acquire
+        /// hazard pointers.
         pub type LocalGuarded<'a, T, N> = crate::guarded::Guarded<T, &'a Local, N>;
 
-        /// Creates a new (empty) local guarded pointer that can be used to acquire hazard pointers.
+        /// Creates a new (empty) local guarded pointer that can be used to
+        /// acquire hazard pointers.
         #[inline]
         pub fn guarded<'a, T: 'a, N: Unsigned + 'static>(
             local: &'a Local

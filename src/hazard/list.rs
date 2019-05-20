@@ -136,7 +136,7 @@ impl HazardList {
     /// Allocates and inserts a new node (hazard pointer) at the tail of the list.
     #[inline]
     fn insert_back(&self, mut tail: &Atomic<HazardNode>, protect: NonNull<()>) -> &Hazard {
-        let mut node = Owned::leak_unprotected(Owned::new(HazardNode {
+        let node = Owned::leak_unprotected(Owned::new(HazardNode {
             hazard: CacheAligned(Hazard::new(protect)),
             next: CacheAligned(Atomic::null()),
         }));
@@ -162,7 +162,6 @@ impl HazardList {
                     if let Some(curr_tail) = unsafe { fail.loaded.as_ref() } {
                         tail = &curr_tail.next;
                     }
-                    node = fail.input;
                 }
             }
         }

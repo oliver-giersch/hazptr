@@ -1,21 +1,26 @@
-//! Caching for retired records until they can be safely dropped and deallocated.
+//! Caching for retired records until they can be safely dropped and
+//! deallocated.
 //!
 //! # Retired and Retired Bags
 //!
-//! Pointers to retired records are stored in `Retired` structs. These contain fat pointers, so they
-//! do maintain dynamic type information, of which only the concrete `Drop` implementation is
-//! actually required. They are stored in `RetiredBag` structs and removed (i.e. dropped and
-//! deallocated) only when no thread has an active hazard pointer protecting the same memory address
-//! of the reclaimed record.
+//! Pointers to retired records are stored in `Retired` structs. These contain
+//! fat pointers, so they do maintain dynamic type information, of which only
+//! the concrete `Drop` implementation is actually required.
+//! They are stored in `RetiredBag` structs and removed (i.e. dropped and
+//! deallocated) only when no thread has an active hazard pointer protecting the
+//! same memory address of the reclaimed record.
 //!
 //! # Abandoned Bags
 //!
-//! When a thread exits it attempts to reclaim all of its retired records. However, it is possible
-//! that some records may not be reclaimed if other threads still have active hazard pointers to
-//! these records. In this case, the exiting thread's retired bag with the remaining unreclaimed
-//! records is abandoned, meaning it is stored in a special global queue. Other threads will
-//! occasionally attempt to adopt such abandoned records, at which point it becomes the adopting
-//! thread's responsibility to reclaim these records.
+//! When a thread exits it attempts to reclaim all of its retired records.
+//! However, it is possible that some records may not be reclaimed if other
+//! threads still have active hazard pointers to these records.
+//! In this case, the exiting thread's retired bag with the remaining
+//! unreclaimed records is abandoned, meaning it is stored in a special global
+//! queue.
+//! Other threads will occasionally attempt to adopt such abandoned records, at
+//! which point it becomes the adopting thread's responsibility to reclaim these
+//! records.
 
 use core::fmt;
 use core::mem;
@@ -29,11 +34,13 @@ use alloc::{boxed::Box, vec::Vec};
 // RetiredBag
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// List for caching reclaimed records before they can be finally dropped/deallocated.
+/// List for caching reclaimed records before they can be finally
+/// dropped/deallocated.
 ///
-/// This type also functions as potential list node for the global list of abandoned bags.
-/// The internal cache uses a `Vec`, which will have to be reallocated if too many retired records
-/// are cached at any time.
+/// This type also functions as potential list node for the global list of
+/// abandoned bags.
+/// The internal cache uses a `Vec`, which will have to be reallocated if too
+/// many retired records are cached at any time.
 #[derive(Debug)]
 pub struct RetiredBag {
     pub inner: Vec<Retired>,
@@ -46,18 +53,17 @@ impl RetiredBag {
     /// Creates a new `RetiredBag` with default capacity for retired records.
     #[inline]
     pub fn new() -> Self {
-        Self {
-            inner: Vec::with_capacity(Self::DEFAULT_CAPACITY),
-            next: None,
-        }
+        Self { inner: Vec::with_capacity(Self::DEFAULT_CAPACITY), next: None }
     }
 
-    /// Merges `self` with the given other `Vec`, which is then dropped (deallocated).
+    /// Merges `self` with the given other `Vec`, which is then dropped
+    /// (deallocated).
     ///
-    /// If the `other` bag has substantially higher (free) capacity than `self`, both vectors are
-    /// swapped before merging. By keeping the larger vector in this case and dropping the smaller
-    /// one, instead, it could be possible to avoid/defer future reallocations, when more records
-    /// are retired.
+    /// If the `other` bag has substantially higher (free) capacity than `self`,
+    /// both vectors are swapped before merging.
+    /// By keeping the larger vector in this case and dropping the smaller one,
+    /// instead, it could be possible to avoid/defer future reallocations, when
+    /// more records are retired.
     #[inline]
     pub fn merge(&mut self, mut other: Vec<Retired>) {
         if (other.capacity() - other.len()) > self.inner.capacity() {
@@ -74,18 +80,23 @@ impl RetiredBag {
 
 type Record<T> = reclaim::Record<T, crate::HP>;
 
-/// Fat pointer to a retired record that has not yet been reclaimed and de-allocated
+/// A fat pointer to a retired record that has not yet been reclaimed and
+/// de-allocated
 pub struct Retired(Box<dyn Any + 'static>);
 
 impl Retired {
-    /// Creates a new `Retired` record from a raw (unmarked) pointer of arbitrary type.
+    /// Creates a new `Retired` record from a raw (unmarked) pointer of
+    /// arbitrary type.
     ///
     /// # Safety
     ///
-    /// The caller has to ensure the given `record` points to a valid address of allocated memory.
-    /// The record will be dropped at an unspecified time, which means it may potentially outlive
-    /// any (non-static) lifetime. Since the record will be only dropped after retirement, this is
-    /// safe, as long as the type's `Drop` implementation does not access any non-static references.
+    /// The caller has to ensure the given `record` points to a valid address of
+    /// allocated memory.
+    /// The record will be dropped at an unspecified time, which means it may
+    /// potentially outlive any (non-static) reference.
+    /// Since the record will be only dropped after retirement, this is safe, as
+    /// long as the type's `Drop` implementation does not access any non-static
+    /// references.
     #[inline]
     pub unsafe fn new_unchecked<'a, T: 'a>(record: NonNull<T>) -> Self {
         // lifetime transmuting is sound when no non-static references are accessed during drop
@@ -104,9 +115,7 @@ impl Retired {
 impl fmt::Debug for Retired {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Retired")
-            .field("address", &(self.address() as *const ()))
-            .finish()
+        f.debug_struct("Retired").field("address", &(self.address() as *const ())).finish()
     }
 }
 
@@ -124,9 +133,7 @@ impl AbandonedBags {
     /// Creates a new (empty) queue.
     #[inline]
     pub const fn new() -> Self {
-        Self {
-            head: AtomicPtr::new(ptr::null_mut()),
-        }
+        Self { head: AtomicPtr::new(ptr::null_mut()) }
     }
 
     /// Adds a new abandoned retired bag to the front of the queue.
@@ -149,8 +156,8 @@ impl AbandonedBags {
         }
     }
 
-    /// Takes the entire content of the queue and merges the retired records of all retired bags
-    /// into one.
+    /// Takes the entire content of the queue and merges the retired records of
+    /// all retired bags into one.
     #[inline]
     pub fn take_and_merge(&self) -> Option<Box<RetiredBag>> {
         // probe first in order to avoid the swap if the stack is empty
