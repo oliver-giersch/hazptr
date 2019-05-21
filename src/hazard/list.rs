@@ -58,7 +58,7 @@ use core::mem;
 use core::ptr::NonNull;
 use core::sync::atomic::{
     self,
-    Ordering::{self, Acquire, Relaxed},
+    Ordering::{Acquire, Relaxed, SeqCst},
 };
 
 #[cfg(not(feature = "std"))]
@@ -114,11 +114,7 @@ impl HazardList {
         {
             if node.hazard.protected.load(Relaxed) == FREE {
                 // (LIS:3P) this `SeqCst` CAS synchronizes-with the `SeqCst` fence (GLO:1)
-                let prev = node.hazard.protected.compare_and_swap(
-                    FREE,
-                    protect.as_ptr(),
-                    Ordering::SeqCst,
-                );
+                let prev = node.hazard.protected.compare_and_swap(FREE, protect.as_ptr(), SeqCst);
 
                 if prev == FREE {
                     return &*node.hazard;
@@ -144,9 +140,8 @@ impl HazardList {
         let hazard = unsafe { &node.deref_unprotected().hazard };
 
         loop {
-            // TODO: check comment
-            // (LIS:5) this `Release` CAS synchronizes-with the `Acquire` loads on the same `head`
-            // or `next` field such as (LIS:1), (LIS:2), (LIS:4) and (LIS:7)
+            // (LIS:5) this `Release` CAS synchronizes-with the `Acquire` loads (LIS:1), (LIS:2),
+            // (LIS:4) and the `Acquire` fence (LIS:7)
             match tail.compare_exchange_weak(
                 Shared::none(),
                 node,
@@ -156,7 +151,7 @@ impl HazardList {
                 Ok(_) => return &*hazard,
                 Err(fail) => {
                     // (LIS:6) this `Acquire` fence synchronizes-with the `Release` CAS (LIS:5)
-                    atomic::fence(Ordering::Acquire);
+                    atomic::fence(Acquire);
 
                     // this is safe because nodes are never retired or reclaimed
                     if let Some(curr_tail) = unsafe { fail.loaded.as_ref() } {
@@ -196,6 +191,7 @@ impl<'a> Iterator for Iter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         self.current.take().map(|unprotected| {
             let node = unsafe { &*unprotected.as_marked_ptr().decompose_ptr() };
+            // (LIS:7) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
             self.current = node.next.load_unprotected(Acquire);
             &*node.hazard
         })

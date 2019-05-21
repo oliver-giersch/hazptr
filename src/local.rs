@@ -1,4 +1,5 @@
-//! Thread local state and caches for reserving hazard pointers or storing retired records.
+//! Thread local state and caches for reserving hazard pointers and storing
+//! retired records.
 
 use core::cell::UnsafeCell;
 use core::mem::ManuallyDrop;
@@ -33,7 +34,8 @@ const SCAN_CACHE: usize = 128;
 // Local
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Container for all thread local data required for reclamation with hazard pointers.
+/// Container for all thread local data required for reclamation with hazard
+/// pointers.
 #[derive(Debug)]
 pub struct Local(UnsafeCell<LocalInner>);
 
@@ -53,7 +55,8 @@ impl Local {
         }))
     }
 
-    /// Attempts to take a reserved hazard from the thread local cache if there are any.
+    /// Attempts to take a reserved hazard from the thread local cache if there
+    /// are any.
     #[inline]
     pub(crate) fn get_hazard(&self, protect: NonNull<()>) -> &'static Hazard {
         let local = unsafe { &mut *self.0.get() };
@@ -70,7 +73,8 @@ impl Local {
     ///
     /// # Errors
     ///
-    /// The operation can fail if the thread local hazard cache is at maximum capacity.
+    /// The operation can fail if the thread local hazard cache is at maximum
+    /// capacity.
     #[inline]
     pub(crate) fn try_recycle_hazard(&self, hazard: &'static Hazard) -> Result<(), RecycleErr> {
         unsafe { &mut *self.0.get() }.hazard_cache.try_push(hazard)?;
@@ -83,9 +87,10 @@ impl Local {
 
     /// Retires a record and increases the operations count.
     ///
-    /// If the operations count reaches a threshold, a scan is triggered which reclaims all records
-    /// than can be safely reclaimed and resets the operations count. Beforehand, the thread
-    /// attempts to adopt all globally abandoned records.
+    /// If the operations count reaches a threshold, a scan is triggered which
+    /// reclaims all records that can be safely reclaimed and resets the
+    /// operations count.
+    /// Previously, an attempt is made to adopt all globally abandoned records.
     #[inline]
     pub(crate) fn retire_record(&self, record: Retired) {
         let local = unsafe { &mut *self.0.get() };
@@ -94,7 +99,8 @@ impl Local {
         local.increase_ops_count();
     }
 
-    /// Increases the thread local operations count and triggers a scan if the threshold is reached.
+    /// Increases the thread local operations count and triggers a scan if the
+    /// threshold is reached.
     #[inline]
     pub(crate) fn increase_ops_count(&self) {
         unsafe { &mut *self.0.get() }.increase_ops_count();
@@ -115,7 +121,8 @@ struct LocalInner {
 }
 
 impl LocalInner {
-    /// Increases the operations count and triggers a scan if the threshold is reached.
+    /// Increases the operations count and triggers a scan if the threshold is
+    /// reached.
     #[inline]
     fn increase_ops_count(&mut self) {
         self.ops_count += 1;
@@ -131,8 +138,8 @@ impl LocalInner {
         }
     }
 
-    /// Reclaims all locally retired records that are unprotected and returns the number of
-    /// reclaimed records.
+    /// Reclaims all locally retired records that are unprotected and returns
+    /// the number of reclaimed records.
     #[inline]
     fn scan_hazards(&mut self) -> usize {
         let len = self.retired_bag.inner.len();
@@ -187,8 +194,8 @@ where
     /// Gets a hazard from local or global storage.
     fn get_hazard(self, protect: NonNull<()>) -> &'static Hazard;
 
-    /// Attempts to recycle `hazard` in the thread local cache for hazards reserved for the current
-    /// thread.
+    /// Attempts to recycle `hazard` in the thread local cache for hazards
+    /// reserved for the current thread.
     ///
     /// # Errors
     ///
@@ -198,8 +205,9 @@ where
     /// - access to the thread local state fails ([`RecycleErr::Access`](RecycleErr::Access))
     fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleErr>;
 
-    /// Increase the internal count of a threads operations counting towards the threshold for
-    /// initiating a new attempt for reclaiming all retired records.
+    /// Increase the internal count of a threads operations counting towards the
+    /// threshold for initiating a new attempt for reclaiming all retired
+    /// records.
     fn increase_ops_count(self);
 }
 
@@ -249,8 +257,6 @@ mod tests {
 
     use super::{Local, HAZARD_CACHE, SCAN_CACHE, SCAN_THRESHOLD};
 
-    type Atomic = crate::Atomic<i32, crate::typenum::U0>;
-
     static GLOBAL: Global = Global::new();
 
     struct DropCount<'a>(&'a AtomicUsize);
@@ -260,16 +266,17 @@ mod tests {
         }
     }
 
-    /*#[test]
+    #[test]
     fn acquire_local() {
         let local = Local::new(&GLOBAL);
         let ptr = NonNull::from(&());
 
-        let hazards: Box<[_]> = (0..HAZARD_CACHE)
+        (0..HAZARD_CACHE)
             .map(|_| local.get_hazard(ptr.cast()))
-            .map(|hazard| HazardPtr::new(hazard, &local))
-            .collect();
-        mem::drop(hazards);
+            .collect::<Box<[_]>>()
+            .iter()
+            .try_for_each(|hazard| local.try_recycle_hazard(hazard))
+            .unwrap();
 
         {
             // local hazard cache is full
@@ -280,10 +287,9 @@ mod tests {
             assert_eq!(0, inner.scan_cache.len());
         }
 
-        let _hazards: Box<[_]> = (0..HAZARD_CACHE)
-            .map(|_| local.get_hazard(ptr.cast()))
-            .map(|hazard| HazardPtr::new(hazard, &local))
-            .collect();
+        // takes all hazards out of local cache and then allocates a new one.
+        let hazards: Box<[_]> = (0..HAZARD_CACHE).map(|_| local.get_hazard(ptr.cast())).collect();
+        let extra = local.get_hazard(ptr.cast());
 
         {
             // local hazard cache is empty
@@ -293,7 +299,11 @@ mod tests {
             assert_eq!(SCAN_CACHE, inner.scan_cache.capacity());
             assert_eq!(0, inner.scan_cache.len());
         }
-    }*/
+
+        hazards.iter().try_for_each(|hazard| local.try_recycle_hazard(*hazard)).unwrap();
+
+        local.try_recycle_hazard(extra).unwrap_err();
+    }
 
     #[test]
     #[cfg_attr(feature = "count-release", ignore)]

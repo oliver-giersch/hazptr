@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn empty() {
         let local = Local::new(&GLOBAL);
-        let mut guarded = Guarded::with_access(&local);
+        let guarded = Guarded::with_access(&local);
         assert!(guarded.hazard.is_none());
         assert!(guarded.marked.is_null());
         assert!(guarded.marked().is_null());

@@ -55,15 +55,16 @@
 //!
 //! # Compare-and-Swap
 //!
-//! The atomic [`compare_exchange`][compare_exchange] method of the [`Atomic`]
-//! type is highly versatile and uses generics and (internal) traits in order to
-//! achieve some degree of argument *overloading*.
-//! The `current` and `new` arguments accept a wide variety of pointer types
+//! The atomic [`compare_exchange`][reclaim::Atomic::compare_exchange] method of the
+//! [`Atomic`] type is highly versatile and uses generics and (internal) traits
+//! in order to achieve some degree of argument *overloading*.
+//! The `current` and `new` arguments accept a wide variety of pointer types,
 //! interchangeably.
 //!
-//! For instance, `current` accepts values of both types [`Shared`] and
-//! [`Option<Shared>`][Option].
-//! It also accepts [`Unprotected`] or `Option<Unprotected>` values.
+//! For instance, `current` accepts values of either types [`Shared`],
+//! [`Option<Shared>`][Option], or [`Marked<Shared>`][Marked].
+//! The same range of types and wrappers is also accepted for [`Unprotected`]
+//! values.
 //! A *compare-and-swap*  can only succeed if the `current` value is equal to
 //! the value that is actually stored in the [`Atomic`].
 //! Consequently, the return type of this method adapts to the input type:
@@ -81,10 +82,12 @@
 //! It must be impossible for a thread to read a reference to a value that has
 //! previously been retired.
 //!
-//! When a *compare-and-swap* fails, a `struct` is returned that contains both
-//! the *actual* value and the value that was attempted to be inserted.
+//! When a *compare-and-swap* fails, a [`struct`][reclaim::CompareExchangeFailure]
+//! is returned that contains both the *actual* value and the value that was
+//! attempted to be inserted.
 //! This ensures that move-only types like [`Owned`] and [`Unlinked`] can be
 //! retrieved again in the case of a failed *compare-and-swap*.
+//! The actually loaded value is returned in the form a [`MarkedPtr`][reclaim::MarkedPtr].
 //!
 //! The other methods of [`Atomic`][Atomic] are similarly versatile in terms of
 //! accepted argument types.
@@ -104,7 +107,6 @@
 //!
 //! [1]: https://dl.acm.org/citation.cfm?id=987595
 //! [reclaim]: https://github.com/oliver-giersch/reclaim
-//! [compare_exchange]: Atomic::compare_exchange
 
 #![cfg_attr(not(feature = "std"), feature(alloc))]
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
@@ -198,6 +200,10 @@ unsafe impl LocalReclaim for HP {
         local.retire_record(Retired::new_unchecked(unmarked));
     }
 }
+
+// TSAN can not correctly asses ordering restraints from explicit fences, so
+// memory operations around such fences need stricter ordering than `Relaxed`,
+// when it is used.
 
 #[cfg(not(feature = "sanitize-threads"))]
 mod sanitize {

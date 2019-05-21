@@ -89,29 +89,32 @@ where
         self.prev = self.next;
         mem::swap(&mut self.guards.prev, &mut self.guards.curr);
 
-        // (ITE:1) this `Acquire` load synchronizes-with the `Release` CAS (ITE:3),
-        match self.guards.curr.acquire(self.prev, Acquire) {
-            Value(curr_marked) => {
+        // (ITE:1) this `Acquire` load synchronizes-with the `Release` CAS (ITE:3), (ORD:1), (ORD:3)
+        match self.prev.load(Acquire, &mut self.guards.curr) {
+            None => None,
+            Some(curr_marked) => {
                 let (curr, curr_tag) = Shared::decompose(curr_marked);
                 if curr_tag == DELETE_TAG {
-                    return self.retry();
+                    return self.retry_err();
                 }
 
-                // This is safe, because `curr` is guarded by `guards.curr` and its lifetime is at
-                // least `'g` as long as the guard is not used to acquire another value.
-                // Before acquiring a new value with `guards.curr` in the next iteration,
-                // `guards.prev` is used to protect its value.
+                // this extends the lifetime of `&curr.next` to `'g`, which is necessary in order to
+                // assign it to `self.next` later
+                // the node `curr` is still protected during this entire time, at first by the
+                // hazard pointer `guards.curr` and in the next iteration by `guards.prev`
                 let curr_next: &'g Atomic<Node<T>> =
                     unsafe { &(*curr.as_marked_ptr().decompose_ptr()).next };
                 let next_raw = curr_next.load_raw(Relaxed);
-                // (ITE:2) this `Acquire` load synchronizes-with the ...
+
+                // (ITE:2) this `Acquire` load synchronizes-with the the `Release` CAS (ITE:3),
+                // (ORD:1), (ORD:3)
                 match self.guards.next.acquire_if_equal(curr_next, next_raw, Acquire) {
                     Ok(next_marked) => {
                         if self.prev.load_raw(Relaxed) != curr.as_marked_ptr() {
-                            return self.retry();
+                            return self.retry_err();
                         }
 
-                        let (next, next_tag) = MarkedPointer::decompose(next_marked);
+                        let (next, next_tag) = Marked::decompose(next_marked);
                         if next_tag == DELETE_TAG {
                             // (ITE:3) this `Release` CAS synchronizes-with the `Acquire` loads
                             // (ITE:1), (ITE:2) and the `Acquire` CAS (ORD:2)
@@ -122,7 +125,7 @@ where
 
                                     return Some(Err(IterErr::Stalled));
                                 }
-                                Err(_) => self.retry(),
+                                Err(_) => return self.retry_err(),
                             };
                         }
 
@@ -134,10 +137,9 @@ where
                             next: self.guards.next.marked(),
                         }))
                     }
-                    _ => self.retry(),
+                    _ => self.retry_err(),
                 }
             }
-            _ => None,
         }
     }
 
@@ -152,24 +154,24 @@ where
     }
 
     #[inline]
-    fn retry(&mut self) -> Option<Result<IterPos<T>, IterErr>> {
+    fn retry_err(&mut self) -> Option<Result<IterPos<T>, IterErr>> {
         // this is safe because no references with "faked" lifetimes can escape
         self.next = unsafe { &*(self.head as *const _) };
         Some(Err(IterErr::Retry))
     }
 }
 
-/// A position in a set consisting of a `prev` reference and a `next` node,
-/// in between which a new node can be inserted.
-type InsertPos<'g, T> = (&'g Atomic<Node<T>>, Option<Shared<'g, Node<T>>>);
-
 /// A position of a set iterator.
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct IterPos<'g, 'set, T> {
     pub prev: Prev<'g, 'set, T>,
     pub curr: Shared<'g, Node<T>>,
     pub next: Marked<Shared<'g, Node<T>>>,
 }
+
+/// A position in a set consisting of a `prev` reference and a `next` node,
+/// in between which a new node can be inserted.
+type InsertPos<'g, T> = (&'g Atomic<Node<T>>, Option<Shared<'g, Node<T>>>);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Prev

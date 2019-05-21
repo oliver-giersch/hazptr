@@ -25,7 +25,10 @@
 use core::fmt;
 use core::mem;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{
+    AtomicPtr,
+    Ordering::{Acquire, Relaxed, Release},
+};
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
@@ -139,18 +142,14 @@ impl AbandonedBags {
     /// Adds a new abandoned retired bag to the front of the queue.
     #[inline]
     pub fn push(&self, abandoned: Box<RetiredBag>) {
-        let leaked = Box::leak(abandoned);
+        let leaked: &mut RetiredBag = Box::leak(abandoned); // makes CLion happy
 
         loop {
-            let head = self.head.load(Ordering::Relaxed);
+            let head = self.head.load(Relaxed);
             leaked.next = NonNull::new(head);
 
             // (RET:1) this `Release` CAS synchronizes-with the `Acquire` swap in (RET:2)
-            if self
-                .head
-                .compare_exchange_weak(head, leaked, Ordering::Release, Ordering::Relaxed)
-                .is_ok()
-            {
+            if self.head.compare_exchange_weak(head, leaked, Release, Relaxed).is_ok() {
                 return;
             }
         }
@@ -161,12 +160,12 @@ impl AbandonedBags {
     #[inline]
     pub fn take_and_merge(&self) -> Option<Box<RetiredBag>> {
         // probe first in order to avoid the swap if the stack is empty
-        if self.head.load(Ordering::Relaxed).is_null() {
+        if self.head.load(Relaxed).is_null() {
             return None;
         }
 
         // (RET:2) this `Acquire` swap synchronizes-with the `Release` CAS in (RET:1)
-        let queue = unsafe { self.head.swap(ptr::null_mut(), Ordering::Acquire).as_mut() };
+        let queue = unsafe { self.head.swap(ptr::null_mut(), Acquire).as_mut() };
         queue.map(|bag| {
             let mut boxed = unsafe { Box::from_raw(bag) };
 
@@ -189,9 +188,9 @@ impl<T> Any for T {}
 mod tests {
     use std::mem;
     use std::ptr::NonNull;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use super::*;
+    use super::{AbandonedBags, Retired, RetiredBag};
 
     struct DropCount<'a>(&'a AtomicUsize);
     impl Drop for DropCount<'_> {

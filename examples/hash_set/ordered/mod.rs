@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 use std::mem;
-use std::sync::atomic::Ordering::{AcqRel, Relaxed, Release};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 
 pub type Atomic<T> = hazptr::Atomic<T, typenum::U1>;
 pub type Guarded<T> = hazptr::Guarded<T, typenum::U1>;
@@ -65,13 +65,15 @@ where
                 Ok(_) => break false,
                 Err(IterPos { prev, curr, next }) => {
                     let next_marked = Marked::marked(next, DELETE_TAG);
-                    if curr.next.compare_exchange(next, next_marked, Relaxed, Relaxed).is_err() {
+                    // (ORD:2) this `Acquire` CAS synchronizes-with the `Release` CAS (ITE:3),
+                    // (ORD:1), (ORD:3)
+                    if curr.next.compare_exchange(next, next_marked, Acquire, Relaxed).is_err() {
                         continue;
                     }
 
-                    // (ORD:3) this `AcqRel` CAS synchronizes-with the `Acquire` loads (ITE:1),
-                    // (ITE2) and the `Release` CAS (ITE:3), (ORD:1)
-                    match prev.compare_exchange(curr, next, AcqRel, Relaxed) {
+                    // (ORD:3) this `Release` CAS synchronizes-with the `Acquire` loads (ITE:1),
+                    // (ITE2) and the `Acquire` CAS (ORD:2)
+                    match prev.compare_exchange(curr, next, Release, Relaxed) {
                         Ok(unlinked) => unsafe { Unlinked::retire(unlinked) },
                         Err(_) => {
                             let _ = Iter::new(&self, guards).find_insert_position(value);
