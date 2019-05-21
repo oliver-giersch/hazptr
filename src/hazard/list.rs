@@ -53,7 +53,6 @@
 //! would actually be a valid candidate for reclamation.
 
 use core::iter::FusedIterator;
-use core::marker::PhantomData;
 use core::mem;
 use core::ptr::NonNull;
 use core::sync::atomic::{
@@ -65,11 +64,10 @@ use core::sync::atomic::{
 use alloc::boxed::Box;
 
 use reclaim::align::CacheAligned;
-use reclaim::leak::{Owned, Shared};
-use reclaim::MarkedPointer;
+use reclaim::leak::Owned;
 
 type Atomic<T> = reclaim::leak::Atomic<T, reclaim::typenum::U0>;
-type Unprotected<T> = reclaim::leak::Unprotected<T, reclaim::typenum::U0>;
+type Shared<'g, T> = reclaim::leak::Shared<'g, T, reclaim::typenum::U0>;
 
 use crate::hazard::{Hazard, FREE};
 use crate::sanitize::{RELEASE_CAS_FAILURE, RELEASE_CAS_SUCCESS};
@@ -96,22 +94,19 @@ impl HazardList {
     pub fn iter(&self) -> Iter {
         Iter {
             // (LIS:1) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
-            current: self.head.load_unprotected(Acquire),
-            _marker: PhantomData,
+            current: self.head.load_shared(Acquire),
         }
     }
 
-    /// Acquires an already inserted and inactive hazard pointer or allocates a new one at the tail
-    /// and returns a reference to it.
+    /// Acquires an already inserted and inactive hazard pointer or allocates a
+    /// new one at the tail and returns a reference to it.
     #[inline]
     pub fn get_hazard(&self, protect: NonNull<()>) -> &Hazard {
         let mut prev = &self.head;
         // (LIS:2) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
-        let mut curr = prev.load_unprotected(Acquire);
+        let mut curr = prev.load_shared(Acquire);
 
-        while let Some(node) =
-            curr.map(|unprotected| unsafe { &*unprotected.as_marked_ptr().decompose_ptr() })
-        {
+        while let Some(node) = curr.map(Shared::into_ref) {
             if node.hazard.protected.load(Relaxed) == FREE {
                 // (LIS:3P) this `SeqCst` CAS synchronizes-with the `SeqCst` fence (GLO:1)
                 let prev = node.hazard.protected.compare_and_swap(FREE, protect.as_ptr(), SeqCst);
@@ -123,7 +118,7 @@ impl HazardList {
 
             prev = &*node.next;
             // (LIS:4) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
-            curr = node.next.load_unprotected(Acquire);
+            curr = node.next.load_shared(Acquire);
         }
 
         self.insert_back(prev, protect)
@@ -132,12 +127,12 @@ impl HazardList {
     /// Allocates and inserts a new node (hazard pointer) at the tail of the list.
     #[inline]
     fn insert_back(&self, mut tail: &Atomic<HazardNode>, protect: NonNull<()>) -> &Hazard {
-        let node = Owned::leak_unprotected(Owned::new(HazardNode {
-            hazard: CacheAligned(Hazard::new(protect)),
-            next: CacheAligned(Atomic::null()),
-        }));
-
-        let hazard = unsafe { &node.deref_unprotected().hazard };
+        let node = unsafe {
+            Owned::leak_shared(Owned::new(HazardNode {
+                hazard: CacheAligned(Hazard::new(protect)),
+                next: CacheAligned(Atomic::null()),
+            }))
+        };
 
         loop {
             // (LIS:5) this `Release` CAS synchronizes-with the `Acquire` loads (LIS:1), (LIS:2),
@@ -148,7 +143,7 @@ impl HazardList {
                 RELEASE_CAS_SUCCESS,
                 RELEASE_CAS_FAILURE,
             ) {
-                Ok(_) => return &*hazard,
+                Ok(_) => return &*Shared::into_ref(node).hazard,
                 Err(fail) => {
                     // (LIS:6) this `Acquire` fence synchronizes-with the `Release` CAS (LIS:5)
                     atomic::fence(Acquire);
@@ -180,8 +175,7 @@ impl Drop for HazardList {
 
 /// Iterator for a `HazardList`
 pub struct Iter<'a> {
-    current: Option<Unprotected<HazardNode>>,
-    _marker: PhantomData<&'a HazardList>,
+    current: Option<Shared<'a, HazardNode>>,
 }
 
 impl<'a> Iterator for Iter<'a> {
@@ -189,10 +183,9 @@ impl<'a> Iterator for Iter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.current.take().map(|unprotected| {
-            let node = unsafe { &*unprotected.as_marked_ptr().decompose_ptr() };
-            // (LIS:7) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
-            self.current = node.next.load_unprotected(Acquire);
+        self.current.take().map(|node| {
+            let node = Shared::into_ref(node);
+            self.current = node.next.load_shared(Acquire);
             &*node.hazard
         })
     }
