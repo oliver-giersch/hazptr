@@ -212,8 +212,8 @@ mod sanitize {
     pub const RELAXED_LOAD: Ordering = Ordering::Relaxed;
     pub const RELAXED_STORE: Ordering = Ordering::Relaxed;
 
-    pub const RELEASE_CAS_SUCCESS: Ordering = Ordering::Release;
-    pub const RELEASE_CAS_FAILURE: Ordering = Ordering::Relaxed;
+    pub const RELEASE_SUCC: Ordering = Ordering::Release;
+    pub const RELEASE_FAIL: Ordering = Ordering::Relaxed;
 }
 
 #[cfg(feature = "sanitize-threads")]
@@ -223,6 +223,6 @@ mod sanitize {
     pub const RELAXED_LOAD: Ordering = Ordering::Acquire;
     pub const RELAXED_STORE: Ordering = Ordering::Release;
 
-    pub const RELEASE_CAS_SUCCESS: Ordering = Ordering::AcqRel;
-    pub const RELEASE_CAS_FAILURE: Ordering = Ordering::Acquire;
+    pub const RELEASE_SUCC: Ordering = Ordering::AcqRel;
+    pub const RELEASE_FAIL: Ordering = Ordering::Acquire;
 }

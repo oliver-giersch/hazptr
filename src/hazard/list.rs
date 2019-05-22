@@ -70,7 +70,7 @@ type Atomic<T> = reclaim::leak::Atomic<T, reclaim::typenum::U0>;
 type Shared<'g, T> = reclaim::leak::Shared<'g, T, reclaim::typenum::U0>;
 
 use crate::hazard::{Hazard, FREE};
-use crate::sanitize::{RELEASE_CAS_FAILURE, RELEASE_CAS_SUCCESS};
+use crate::sanitize::{RELEASE_FAIL, RELEASE_SUCC};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HazardList
@@ -137,20 +137,15 @@ impl HazardList {
         loop {
             // (LIS:5) this `Release` CAS synchronizes-with the `Acquire` loads (LIS:1), (LIS:2),
             // (LIS:4) and the `Acquire` fence (LIS:7)
-            match tail.compare_exchange_weak(
-                Shared::none(),
-                node,
-                RELEASE_CAS_SUCCESS,
-                RELEASE_CAS_FAILURE,
-            ) {
+            match tail.compare_exchange_weak(Shared::none(), node, RELEASE_SUCC, RELEASE_FAIL) {
                 Ok(_) => return &*Shared::into_ref(node).hazard,
                 Err(fail) => {
                     // (LIS:6) this `Acquire` fence synchronizes-with the `Release` CAS (LIS:5)
                     atomic::fence(Acquire);
 
                     // this is safe because nodes are never retired or reclaimed
-                    if let Some(curr_tail) = unsafe { fail.loaded.as_ref() } {
-                        tail = &curr_tail.next;
+                    if let Some(node) = fail.loaded {
+                        tail = unsafe { &node.deref_unprotected().next };
                     }
                 }
             }
