@@ -47,7 +47,7 @@ impl<T: 'static> Stack<T> {
             if let Ok(unlinked) = self.head.compare_exchange_weak(head, next, Release, Relaxed) {
                 unsafe {
                     let res = ptr::read(&*unlinked.elem);
-                    Unlinked::retire(unlinked);
+                    unlinked.retire();
 
                     return Some(res);
                 }

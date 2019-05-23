@@ -5,7 +5,7 @@ use reclaim::{LocalReclaim, Protect, Reclaim};
 
 use crate::global::Global;
 use crate::hazard::Hazard;
-use crate::local::{Local, LocalAccess, RecycleErr};
+use crate::local::{Local, LocalAccess, RecycleError};
 use crate::{Guarded, Unlinked, HP};
 
 /// The single static `Global` instance
@@ -46,10 +46,10 @@ impl LocalAccess for DefaultAccess {
     }
 
     #[inline]
-    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleErr> {
+    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleError> {
         LOCAL
             .try_with(|local| Local::try_recycle_hazard(local, hazard))
-            .unwrap_or(Err(RecycleErr::Access))
+            .unwrap_or(Err(RecycleError::Access))
     }
 
     #[inline]

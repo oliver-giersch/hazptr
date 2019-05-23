@@ -105,48 +105,6 @@ following steps:
 - hazard pointers can only be created by explicitly passing a reference to the
   current thread's `Local` instance 
 
-## Down the Road
-
-Future developments may include adding support for custom allocators.
-
-## Terminology
-
-This crate uses a certain terminology for describing common entities in the
-context of concurrent memory reclamation:
-
-- ### record
-
-  Records are heap allocated values or data structures, which are managed by a
-  concurrent reclamation scheme.
-
-- ### reclaim
-
-  Reclamation refers to the process of collecting and freeing previously
-  **retired** garbage.
-  This includes both **dropping** the value in the Rust sense and de-allocating
-  its (heap allocated) memory.
-
-- ### retire
-
-  After a record is unlinked from a concurrent collection or data structure and
-  is no longer accessible it can be safely **retired**.
-  This marks the record as garbage to be collected (i.e. **reclaimed**) later.
-
-- ### unlink
-
-  Unlinking a value refers to the process of making a value in shared memory
-  inaccessible for other threads.
-  This is commonly achieved by atomic *swap* or *compare-and-swap* operations.
-  The primary invariant for safe memory reclamation is, that no unique value
-  (pointer) must exist more than once in any concurrent collection, so that a
-  *swap* is in fact guaranteed to make a value fully inaccessible.
-
-### The Record Lifecycle
-
-```
-allocate --> insert --> reference --> unlink --> retire --> reclaim
-```
-
 ## License
 
 Hazptr is distributed under the terms of both the MIT license and the

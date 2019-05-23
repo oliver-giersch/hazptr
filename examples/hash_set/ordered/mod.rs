@@ -74,7 +74,7 @@ where
                     // (ORD:3) this `Release` CAS synchronizes-with the `Acquire` loads (ITE:1),
                     // (ITE2) and the `Acquire` CAS (ORD:2)
                     match prev.compare_exchange(curr, next, Release, Relaxed) {
-                        Ok(unlinked) => unsafe { Unlinked::retire(unlinked) },
+                        Ok(unlinked) => unsafe { unlinked.retire() },
                         Err(_) => {
                             let _ = Iter::new(&self, guards).find_insert_position(value);
                         }
@@ -89,7 +89,8 @@ where
         success
     }
 
-    /// Returns a reference to the value in the set, if any, that is equal to the given `value`.
+    /// Returns a reference to the value in the set, if any, that is equal to
+    /// the given `value`.
     #[inline]
     pub fn get<'g, Q>(&self, value: &Q, guards: &'g mut Guards<T>) -> Option<&'g T>
     where
@@ -114,7 +115,8 @@ impl<T> Drop for OrderedSet<T> {
     }
 }
 
-/// A container for the three hazard pointers required to safely traverse a hash set.
+/// A container for the three hazard pointers required to safely traverse a hash
+/// set.
 #[derive(Debug, Default)]
 pub struct Guards<T> {
     prev: Guarded<Node<T>>,

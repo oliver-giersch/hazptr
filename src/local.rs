@@ -2,9 +2,13 @@
 //! retired records.
 
 use core::cell::UnsafeCell;
+use core::fmt;
 use core::mem::ManuallyDrop;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{self, Ordering};
+
+#[cfg(feature = "std")]
+use std::error;
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
@@ -76,7 +80,7 @@ impl Local {
     /// The operation can fail if the thread local hazard cache is at maximum
     /// capacity.
     #[inline]
-    pub(crate) fn try_recycle_hazard(&self, hazard: &'static Hazard) -> Result<(), RecycleErr> {
+    pub(crate) fn try_recycle_hazard(&self, hazard: &'static Hazard) -> Result<(), RecycleError> {
         unsafe { &mut *self.0.get() }.hazard_cache.try_push(hazard)?;
 
         // (LOC:2) this `Release` store synchronizes-with any `Acquire` load on the
@@ -201,9 +205,9 @@ where
     ///
     /// This operation can fail in two circumstances:
     ///
-    /// - the thread local cache is at capacity ([`RecycleErr::Capacity`](RecycleErr::Capacity))
+    /// - the thread local cache is full ([`RecycleErr::Capacity`](RecycleErr::Capacity))
     /// - access to the thread local state fails ([`RecycleErr::Access`](RecycleErr::Access))
-    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleErr>;
+    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleError>;
 
     /// Increase the internal count of a threads operations counting towards the
     /// threshold for initiating a new attempt for reclaiming all retired
@@ -218,7 +222,7 @@ impl<'a> LocalAccess for &'a Local {
     }
 
     #[inline]
-    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleErr> {
+    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleError> {
         Local::try_recycle_hazard(self, hazard)
     }
 
@@ -233,18 +237,35 @@ impl<'a> LocalAccess for &'a Local {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Error type for thread local recycle operations.
-#[derive(Debug)]
-pub enum RecycleErr {
+#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum RecycleError {
     Access,
     Capacity,
 }
 
-impl From<CapacityError<&'static Hazard>> for RecycleErr {
+impl From<CapacityError<&'static Hazard>> for RecycleError {
     #[inline]
     fn from(_: CapacityError<&'static Hazard>) -> Self {
-        RecycleErr::Capacity
+        RecycleError::Capacity
     }
 }
+
+impl fmt::Display for RecycleError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            RecycleError::Access => {
+                write!(f, "failed to access already destroyed thread local storage")
+            }
+            RecycleError::Capacity => {
+                write!(f, "thread local cache for hazard pointer already full")
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl error::Error for RecycleError {}
 
 #[cfg(test)]
 mod tests {

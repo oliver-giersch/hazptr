@@ -120,7 +120,7 @@ where
                             // (ITE:1), (ITE:2) and the `Acquire` CAS (ORD:2)
                             match self.prev.compare_exchange(curr, next, Release, Relaxed) {
                                 Ok(unlinked) => {
-                                    unsafe { Unlinked::retire(unlinked) };
+                                    unsafe { retire.unlinked() };
                                     mem::swap(&mut self.guards.prev, &mut self.guards.curr);
 
                                     return Some(Err(IterErr::Stalled));
