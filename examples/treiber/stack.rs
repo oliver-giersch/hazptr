@@ -6,7 +6,6 @@ use hazptr::guarded;
 
 type Atomic<T> = hazptr::Atomic<T, hazptr::typenum::U0>;
 type Owned<T> = hazptr::Owned<T, hazptr::typenum::U0>;
-type Unlinked<T> = hazptr::Unlinked<T, hazptr::typenum::U0>;
 
 #[derive(Default)]
 pub struct Stack<T> {

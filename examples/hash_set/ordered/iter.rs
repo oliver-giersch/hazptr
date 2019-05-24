@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 
 use hazptr::reclaim::prelude::*;
 
-use crate::ordered::{Atomic, Guards, OrderedSet, Shared, Unlinked, DELETE_TAG};
+use crate::ordered::{Atomic, Guards, OrderedSet, Shared, DELETE_TAG};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Node
@@ -120,7 +120,7 @@ where
                             // (ITE:1), (ITE:2) and the `Acquire` CAS (ORD:2)
                             match self.prev.compare_exchange(curr, next, Release, Relaxed) {
                                 Ok(unlinked) => {
-                                    unsafe { retire.unlinked() };
+                                    unsafe { unlinked.retire() };
                                     mem::swap(&mut self.guards.prev, &mut self.guards.curr);
 
                                     return Some(Err(IterErr::Stalled));

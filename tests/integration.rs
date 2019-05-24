@@ -4,12 +4,10 @@ use std::sync::{
 };
 use std::thread;
 
-use hazptr::reclaim::Protect;
 use hazptr::typenum::U0;
 use hazptr::{guarded, Owned};
 
 type Atomic<T> = hazptr::Atomic<T, U0>;
-type Unlinked<T> = hazptr::Unlinked<T, U0>;
 
 struct DropCount(Arc<AtomicUsize>);
 impl Drop for DropCount {
@@ -56,9 +54,9 @@ fn abandon_on_panic() {
         thread::spawn(move || {
             barrier.wait();
             unsafe {
-                Unlinked::retire(records[0].swap(Owned::none(), Ordering::Relaxed).unwrap());
-                Unlinked::retire(records[1].swap(Owned::none(), Ordering::Relaxed).unwrap());
-                Unlinked::retire(records[2].swap(Owned::none(), Ordering::Relaxed).unwrap());
+                records[0].swap(Owned::none(), Ordering::Relaxed).unwrap().retire();
+                records[1].swap(Owned::none(), Ordering::Relaxed).unwrap().retire();
+                records[2].swap(Owned::none(), Ordering::Relaxed).unwrap().retire();
             }
 
             panic!("explicit panic: thread 2 abandons all retired records it can't reclaim");

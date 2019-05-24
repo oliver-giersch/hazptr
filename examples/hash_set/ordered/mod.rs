@@ -6,7 +6,6 @@ pub type Atomic<T> = hazptr::Atomic<T, typenum::U1>;
 pub type Guarded<T> = hazptr::Guarded<T, typenum::U1>;
 pub type Owned<T> = hazptr::Owned<T, typenum::U1>;
 pub type Shared<'g, T> = hazptr::Shared<'g, T, typenum::U1>;
-type Unlinked<T> = hazptr::Unlinked<T, typenum::U1>;
 
 use hazptr::reclaim::prelude::*;
 use hazptr::typenum;
