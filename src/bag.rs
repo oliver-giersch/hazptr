@@ -139,7 +139,6 @@ impl AbandonedBags {
 
 #[cfg(test)]
 mod tests {
-    use std::mem;
     use std::ptr::NonNull;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -188,9 +187,7 @@ mod tests {
         abandoned.push(bag3);
 
         let merged = abandoned.take_and_merge().unwrap();
-        assert_eq!(7, merged.inner.len());
+        assert_eq!(merged.inner.len(), 7);
         assert_eq!(RetiredBag::DEFAULT_CAPACITY, merged.inner.capacity());
-        mem::drop(merged);
-        assert_eq!(2, count.load(Ordering::Relaxed));
     }
 }

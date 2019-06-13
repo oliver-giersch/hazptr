@@ -19,7 +19,7 @@ use alloc::{boxed::Box, vec::Vec};
 use arrayvec::{ArrayVec, CapacityError};
 
 use crate::bag::{Retired, RetiredBag};
-use crate::global::Global;
+use crate::global;
 use crate::hazard::{Hazard, Protected};
 use crate::sanitize;
 
@@ -38,6 +38,35 @@ const HAZARD_CACHE: usize = 16;
 const SCAN_CACHE: usize = 128;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+// LocalAccess
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// A trait for abstracting over different means of accessing thread local state
+pub trait LocalAccess
+where
+    Self: Clone + Copy + Sized,
+{
+    /// Gets a hazard from local or global storage.
+    fn get_hazard(self, protect: NonNull<()>) -> &'static Hazard;
+
+    /// Attempts to recycle `hazard` in the thread local cache for hazards
+    /// reserved for the current thread.
+    ///
+    /// # Errors
+    ///
+    /// This operation can fail in two circumstances:
+    ///
+    /// - the thread local cache is full ([`RecycleErr::Capacity`](RecycleErr::Capacity))
+    /// - access to the thread local state fails ([`RecycleErr::Access`](RecycleErr::Access))
+    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleError>;
+
+    /// Increase the internal count of a threads operations counting towards the
+    /// threshold for initiating a new attempt for reclaiming all retired
+    /// records.
+    fn increase_ops_count(self);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 // Local
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -49,47 +78,16 @@ pub struct Local(UnsafeCell<LocalInner>);
 impl Local {
     /// Creates a new container for the thread local state.
     #[inline]
-    pub fn new(global: &'static Global) -> Self {
+    pub fn new() -> Self {
         Self(UnsafeCell::new(LocalInner {
-            global,
             ops_count: 0,
             hazard_cache: ArrayVec::new(),
             scan_cache: Vec::with_capacity(SCAN_CACHE),
-            retired_bag: match global.try_adopt_abandoned_records() {
+            retired_bag: match global::GLOBAL.try_adopt_abandoned_records() {
                 Some(boxed) => ManuallyDrop::new(boxed),
                 None => ManuallyDrop::new(Box::new(RetiredBag::new())),
             },
         }))
-    }
-
-    /// Attempts to take a reserved hazard from the thread local cache if there
-    /// are any.
-    #[inline]
-    pub(crate) fn get_hazard(&self, protect: NonNull<()>) -> &'static Hazard {
-        let local = unsafe { &mut *self.0.get() };
-        if let Some(hazard) = local.hazard_cache.pop() {
-            // (LOC:1) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1).
-            hazard.set_protected(protect, SeqCst);
-            hazard
-        } else {
-            local.global.get_hazard(protect)
-        }
-    }
-
-    /// Attempts to cache `hazard` in the thread local storage.
-    ///
-    /// # Errors
-    ///
-    /// The operation can fail if the thread local hazard cache is at maximum
-    /// capacity.
-    #[inline]
-    pub(crate) fn try_recycle_hazard(&self, hazard: &'static Hazard) -> Result<(), RecycleError> {
-        unsafe { &mut *self.0.get() }.hazard_cache.try_push(hazard)?;
-
-        // (LOC:2) this `Release` store synchronizes-with any `Acquire` load on the
-        // `protected` field of the same hazard pointer
-        hazard.set_reserved(Release);
-        Ok(())
     }
 
     /// Retires a record and increases the operations count.
@@ -105,11 +103,43 @@ impl Local {
         #[cfg(not(feature = "count-release"))]
         local.increase_ops_count();
     }
+}
+
+impl<'a> LocalAccess for &'a Local {
+    /// Attempts to take a reserved hazard from the thread local cache if there
+    /// are any.
+    #[inline]
+    fn get_hazard(self, protect: NonNull<()>) -> &'static Hazard {
+        let local = unsafe { &mut *self.0.get() };
+        if let Some(hazard) = local.hazard_cache.pop() {
+            // (LOC:1) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1).
+            hazard.set_protected(protect, SeqCst);
+            hazard
+        } else {
+            global::GLOBAL.get_hazard(protect)
+        }
+    }
+
+    /// Attempts to cache `hazard` in the thread local storage.
+    ///
+    /// # Errors
+    ///
+    /// The operation can fail if the thread local hazard cache is at maximum
+    /// capacity.
+    #[inline]
+    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleError> {
+        unsafe { &mut *self.0.get() }.hazard_cache.try_push(hazard)?;
+
+        // (LOC:2) this `Release` store synchronizes-with any `Acquire` load on the
+        // `protected` field of the same hazard pointer
+        hazard.set_reserved(Release);
+        Ok(())
+    }
 
     /// Increases the thread local operations count and triggers a scan if the
     /// threshold is reached.
     #[inline]
-    pub(crate) fn increase_ops_count(&self) {
+    fn increase_ops_count(self) {
         unsafe { &mut *self.0.get() }.increase_ops_count();
     }
 }
@@ -120,7 +150,6 @@ impl Local {
 
 #[derive(Debug)]
 struct LocalInner {
-    global: &'static Global,
     ops_count: u32,
     hazard_cache: ArrayVec<[&'static Hazard; HAZARD_CACHE]>,
     scan_cache: Vec<Protected>,
@@ -136,7 +165,7 @@ impl LocalInner {
 
         if self.ops_count == SCAN_THRESHOLD {
             // try to adopt and merge any (global) abandoned retired bags
-            if let Some(abandoned_bag) = self.global.try_adopt_abandoned_records() {
+            if let Some(abandoned_bag) = global::GLOBAL.try_adopt_abandoned_records() {
                 self.retired_bag.merge(abandoned_bag.inner);
             }
 
@@ -154,7 +183,7 @@ impl LocalInner {
             return 0;
         }
 
-        self.global.collect_protected_hazards(&mut self.scan_cache);
+        global::GLOBAL.collect_protected_hazards(&mut self.scan_cache);
 
         self.scan_cache.sort_unstable();
         // TODO: use `drain_filter` once stable
@@ -187,54 +216,8 @@ impl Drop for LocalInner {
         let bag = unsafe { ptr::read(&*self.retired_bag) };
 
         if !bag.inner.is_empty() {
-            self.global.abandon_retired_bag(bag);
+            global::GLOBAL.abandon_retired_bag(bag);
         }
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// LocalAccess
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// A trait for abstracting over different means of accessing thread local state
-pub trait LocalAccess
-where
-    Self: Clone + Copy + Sized,
-{
-    /// Gets a hazard from local or global storage.
-    fn get_hazard(self, protect: NonNull<()>) -> &'static Hazard;
-
-    /// Attempts to recycle `hazard` in the thread local cache for hazards
-    /// reserved for the current thread.
-    ///
-    /// # Errors
-    ///
-    /// This operation can fail in two circumstances:
-    ///
-    /// - the thread local cache is full ([`RecycleErr::Capacity`](RecycleErr::Capacity))
-    /// - access to the thread local state fails ([`RecycleErr::Access`](RecycleErr::Access))
-    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleError>;
-
-    /// Increase the internal count of a threads operations counting towards the
-    /// threshold for initiating a new attempt for reclaiming all retired
-    /// records.
-    fn increase_ops_count(self);
-}
-
-impl<'a> LocalAccess for &'a Local {
-    #[inline]
-    fn get_hazard(self, protect: NonNull<()>) -> &'static Hazard {
-        Local::get_hazard(self, protect)
-    }
-
-    #[inline]
-    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleError> {
-        Local::try_recycle_hazard(self, hazard)
-    }
-
-    #[inline]
-    fn increase_ops_count(self) {
-        Local::increase_ops_count(self);
     }
 }
 
@@ -280,11 +263,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::bag::Retired;
-    use crate::global::Global;
 
-    use super::{Local, HAZARD_CACHE, SCAN_CACHE, SCAN_THRESHOLD};
-
-    static GLOBAL: Global = Global::new();
+    use super::{Local, LocalAccess, HAZARD_CACHE, SCAN_CACHE, SCAN_THRESHOLD};
 
     struct DropCount<'a>(&'a AtomicUsize);
     impl Drop for DropCount<'_> {
@@ -295,7 +275,7 @@ mod tests {
 
     #[test]
     fn acquire_local() {
-        let local = Local::new(&GLOBAL);
+        let local = Local::new();
         let ptr = NonNull::from(&());
 
         (0..HAZARD_CACHE)
@@ -338,7 +318,7 @@ mod tests {
         const THRESHOLD: usize = SCAN_THRESHOLD as usize;
 
         let count = AtomicUsize::new(0);
-        let local = Local::new(&GLOBAL);
+        let local = Local::new();
 
         // allocate & retire (THRESHOLD - 1) records
         (0..THRESHOLD - 1)
@@ -375,7 +355,7 @@ mod tests {
         const BELOW_THRESHOLD: usize = SCAN_THRESHOLD as usize / 2;
 
         let count = AtomicUsize::new(0);
-        let local = Local::new(&GLOBAL);
+        let local = Local::new();
 
         (0..BELOW_THRESHOLD)
             .map(|_| Box::new(DropCount(&count)))

@@ -180,7 +180,6 @@ mod tests {
     use reclaim::prelude::*;
     use reclaim::typenum::U0;
 
-    use crate::global::Global;
     use crate::local::Local;
     use crate::Shared;
 
@@ -191,11 +190,9 @@ mod tests {
 
     type Guarded<'a> = super::Guarded<i32, &'a Local, U0>;
 
-    static GLOBAL: Global = Global::new();
-
     #[test]
     fn empty() {
-        let local = Local::new(&GLOBAL);
+        let local = Local::new();
         let guarded = Guarded::with_access(&local);
         assert!(guarded.hazard.is_none());
         assert!(guarded.marked.is_null());
@@ -205,7 +202,7 @@ mod tests {
 
     #[test]
     fn acquire() {
-        let local = Local::new(&GLOBAL);
+        let local = Local::new();
         let mut guarded = Guarded::with_access(&local);
 
         let null = Atomic::null();
@@ -230,7 +227,7 @@ mod tests {
 
     #[test]
     fn acquire_if_equal() {
-        let local = Local::new(&GLOBAL);
+        let local = Local::new();
         let mut guarded = Guarded::with_access(&local);
 
         let empty = Atomic::null();

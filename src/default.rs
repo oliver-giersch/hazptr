@@ -3,16 +3,12 @@ use std::ptr::NonNull;
 use reclaim::typenum::Unsigned;
 use reclaim::{LocalReclaim, Protect, Reclaim};
 
-use crate::global::Global;
 use crate::hazard::Hazard;
 use crate::local::{Local, LocalAccess, RecycleError};
 use crate::{Guarded, Unlinked, HP};
 
-/// The single static `Global` instance
-static GLOBAL: Global = Global::new();
-
 // Per-thread instances of `Local`
-thread_local!(static LOCAL: Local = Local::new(&GLOBAL));
+thread_local!(static LOCAL: Local = Local::new());
 
 /// Creates a new (empty) guarded pointer that can be used to acquire hazard pointers.
 #[inline]
@@ -42,19 +38,19 @@ pub struct DefaultAccess;
 impl LocalAccess for DefaultAccess {
     #[inline]
     fn get_hazard(self, protect: NonNull<()>) -> &'static Hazard {
-        LOCAL.with(|local| Local::get_hazard(local, protect))
+        LOCAL.with(|local| local.get_hazard(protect))
     }
 
     #[inline]
     fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleError> {
         LOCAL
-            .try_with(|local| Local::try_recycle_hazard(local, hazard))
+            .try_with(|local| local.try_recycle_hazard(hazard))
             .unwrap_or(Err(RecycleError::Access))
     }
 
     #[inline]
     fn increase_ops_count(self) {
-        LOCAL.with(Local::increase_ops_count);
+        LOCAL.with(|local| local.increase_ops_count());
     }
 }
 

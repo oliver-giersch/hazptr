@@ -8,7 +8,7 @@ https://travis-ci.com/oliver-giersch/hazptr)
 [![Documentation](https://docs.rs/hazptr/badge.svg)](https://docs.rs/hazptr)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](
 https://github.com/oliver-giersch/hazptr)
-[![Rust 1.35+](https://img.shields.io/badge/rust-1.35+-lightgray.svg)](
+[![Rust 1.36+](https://img.shields.io/badge/rust-1.36+-lightgray.svg)](
 https://www.rust-lang.org)
 
 Whenever a thread reads a value from shared memory it also protects the loaded
@@ -53,7 +53,7 @@ threads whenever records need to be protected.
 
 See [examples/treiber/stack.rs](examples/treiber/stack.rs) for an implementation
 of Treiber's stack with hazard pointers or
-[examples/hash_set/ordered.rs](examples/hash_set/ordered.rs) for an
+[examples/hash_set/ordered.rs](examples/hash_set/ordered/mod.rs) for an
 implementation of a concurrent hash set.
 
 ## Features
