@@ -90,8 +90,8 @@ lead to the accumulation of large amounts of retired but unreclaimed records
 When building the crate without the default-enabled `std` feature, it becomes
 possible to use its functionality in an `#[no_std] + alloc` environment, albeit
 with arguably worse ergonomics.
-In this configuration, the crate's public API additionally exposes the types
-`Global` and `Local`.
+In this configuration, the crate's public API additionally exposes the `Local`
+type.
 Additionally, instead of exporting the `Guarded` type, a different
 `LocalGuarded` type is exported, which contains an explicit reference to the
 thread local state.
@@ -99,9 +99,7 @@ thread local state.
 In order to use `hazptr` in such an environment, one has to manually to do the
 following steps:
 
-- create a static `Global` instance
-- for every thread, create a separate `Local` instance, which takes a
-  `&'static Global`.
+- for every thread, create a separate `Local` instance
 - hazard pointers can only be created by explicitly passing a reference to the
   current thread's `Local` instance 
 
