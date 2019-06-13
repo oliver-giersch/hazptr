@@ -24,7 +24,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 mod list;
 
-pub use self::list::{HazardList, Iter};
+pub(crate) use self::list::HazardList;
 
 const FREE: *mut () = 0 as *mut ();
 const SCOPED: *mut () = 1 as *mut ();

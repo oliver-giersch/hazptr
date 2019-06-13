@@ -131,7 +131,7 @@ impl<T, L: LocalAccess, N: Unsigned> Guarded<T, L, N> {
         }
 
         if let Some(hazard) = self.hazard {
-            // (GUA:y) this `Release` store synchronizes-with ...
+            // (GUA:3) this `Release` store synchronizes-with ...
             hazard.set_scoped(Release);
         }
 

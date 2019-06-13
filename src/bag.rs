@@ -16,13 +16,12 @@
 //! However, it is possible that some records may not be reclaimed if other
 //! threads still have active hazard pointers to these records.
 //! In this case, the exiting thread's retired bag with the remaining
-//! unreclaimed records is abandoned, meaning it is stored in a special global
+//! un-reclaimed records is abandoned, meaning it is stored in a special global
 //! queue.
 //! Other threads will occasionally attempt to adopt such abandoned records, at
 //! which point it becomes the adopting thread's responsibility to reclaim these
 //! records.
 
-use core::fmt;
 use core::mem;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{
@@ -32,6 +31,8 @@ use core::sync::atomic::{
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
+
+pub(crate) type Retired = reclaim::Retired<crate::HP>;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // RetiredBag
@@ -45,7 +46,7 @@ use alloc::{boxed::Box, vec::Vec};
 /// The internal cache uses a `Vec`, which will have to be reallocated if too
 /// many retired records are cached at any time.
 #[derive(Debug)]
-pub struct RetiredBag {
+pub(crate) struct RetiredBag {
     pub inner: Vec<Retired>,
     next: Option<NonNull<RetiredBag>>,
 }
@@ -78,57 +79,12 @@ impl RetiredBag {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Retired
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-type Record<T> = reclaim::Record<T, crate::HP>;
-
-/// A fat pointer to a retired record that has not yet been reclaimed and
-/// de-allocated
-pub struct Retired(Box<dyn Any + 'static>);
-
-impl Retired {
-    /// Creates a new `Retired` record from a raw (unmarked) pointer of
-    /// arbitrary type.
-    ///
-    /// # Safety
-    ///
-    /// The caller has to ensure the given `record` points to a valid address of
-    /// allocated memory.
-    /// The record will be dropped at an unspecified time, which means it may
-    /// potentially outlive any (non-static) reference.
-    /// Since the record will be only dropped after retirement, this is safe, as
-    /// long as the type's `Drop` implementation does not access any non-static
-    /// references.
-    #[inline]
-    pub unsafe fn new_unchecked<'a, T: 'a>(record: NonNull<T>) -> Self {
-        // lifetime transmuting is sound when no non-static references are accessed during drop
-        let any: NonNull<dyn Any + 'a> = Record::from_raw_non_null(record);
-        let any: NonNull<dyn Any + 'static> = mem::transmute(any);
-        Self(Box::from_raw(any.as_ptr()))
-    }
-
-    /// Gets the memory address of the retired record.
-    #[inline]
-    pub fn address(&self) -> usize {
-        &*self.0 as *const _ as *mut () as usize
-    }
-}
-
-impl fmt::Debug for Retired {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Retired").field("address", &(self.address() as *const ())).finish()
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
 // AbandonedBags
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Concurrent queue containing all retired bags abandoned by exited threads
 #[derive(Debug)]
-pub struct AbandonedBags {
+pub(crate) struct AbandonedBags {
     head: AtomicPtr<RetiredBag>,
 }
 
@@ -180,13 +136,6 @@ impl AbandonedBags {
         })
     }
 }
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Any (trait)
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-trait Any {}
-impl<T> Any for T {}
 
 #[cfg(test)]
 mod tests {

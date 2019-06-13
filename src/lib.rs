@@ -108,8 +108,8 @@
 //! [1]: https://dl.acm.org/citation.cfm?id=987595
 //! [reclaim]: https://github.com/oliver-giersch/reclaim
 
-#![cfg_attr(not(feature = "std"), feature(alloc))]
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
+#![warn(missing_docs)]
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
@@ -121,29 +121,30 @@ use cfg_if::cfg_if;
 use reclaim::prelude::*;
 use typenum::Unsigned;
 
-/// Atomic pointer that must be either `null` or valid. Loads of non-null values
-/// must acquire hazard pointers and are hence protected from reclamation.
+/// A specialization of [`Atomic`][reclaim::Atomic] for the [`HP`] reclamation
+/// scheme.
 pub type Atomic<T, N> = reclaim::Atomic<T, HP, N>;
-/// Shared reference to a value loaded from shared memory that is protected by a
-/// hazard pointer.
+/// A specialization of [`Shared`][reclaim::Shared] for the [`HP`] reclamation
+/// scheme.
 pub type Shared<'g, T, N> = reclaim::Shared<'g, T, HP, N>;
-/// A pointer type for heap allocation like `Box` that can be marked.
+/// A specialization of [`Owned`][reclaim::Owned] for the [`HP`] reclamation
+/// scheme.
 pub type Owned<T, N> = reclaim::Owned<T, HP, N>;
-/// Unique reference to a value that has been successfully unlinked and can be
-/// retired.
+/// A specialization of [`Unlinked`][reclaim::Unlinked] for the [`HP`]
+/// reclamation scheme.
 pub type Unlinked<T, N> = reclaim::Unlinked<T, HP, N>;
-/// Shared reference to a value loaded from shared memory that is **not** safe
-/// to dereference and could be reclaimed at any point.
+/// A specialization of [`Unprotected`][reclaim::Unprotected] for the [`HP`]
+/// reclamation scheme.
 pub type Unprotected<T, N> = reclaim::Unprotected<T, HP, N>;
 
 #[cfg(feature = "std")]
 mod default;
 
+mod bag;
 mod global;
 mod guarded;
 mod hazard;
 mod local;
-mod retired;
 
 cfg_if! {
     if #[cfg(feature = "std")] {
@@ -171,7 +172,7 @@ cfg_if! {
     }
 }
 
-use crate::retired::Retired;
+use crate::bag::Retired;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HP

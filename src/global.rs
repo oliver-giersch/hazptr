@@ -2,13 +2,13 @@
 //! records.
 
 use core::ptr::NonNull;
-use core::sync::atomic::{self, Ordering};
+use core::sync::atomic::{self, Ordering::SeqCst};
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
+use crate::bag::{AbandonedBags, RetiredBag};
 use crate::hazard::{Hazard, HazardList, Protected};
-use crate::retired::{AbandonedBags, RetiredBag};
 use crate::sanitize;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -50,9 +50,9 @@ impl Global {
         // (GLO:1) this `SeqCst` fence synchronizes-with the `SeqCst` stores (LOC:1), (GUA:2),
         // (GUA:4) and the `SeqCst` CAS (LIS:3P). This establishes total order between all these
         // operations, which is required here in order to ensure that all stores protecting pointers
-        // have become fully visible, when the hazard pointers are scanned and retired records are
+        // have become fully visible when the hazard pointers are scanned and retired records are
         // reclaimed.
-        atomic::fence(Ordering::SeqCst);
+        atomic::fence(SeqCst);
 
         for hazard in self.hazards.iter().fuse() {
             if let Some(protected) = hazard.protected(sanitize::RELAXED_LOAD) {

@@ -78,7 +78,7 @@ use crate::sanitize::{RELEASE_FAIL, RELEASE_SUCC};
 
 /// Linked list for storing hazard pointers
 #[derive(Debug, Default)]
-pub struct HazardList {
+pub(crate) struct HazardList {
     head: Atomic<HazardNode>,
 }
 
@@ -169,7 +169,7 @@ impl Drop for HazardList {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Iterator for a `HazardList`
-pub struct Iter<'a> {
+pub(crate) struct Iter<'a> {
     current: Option<Shared<'a, HazardNode>>,
 }
 

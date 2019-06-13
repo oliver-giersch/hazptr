@@ -34,8 +34,7 @@ version = "0.4.10"
 default-features = false
 
 [dependencies.reclaim]
-git = "https://github.com/oliver-giersch/reclaim.git"
-branch = "master"
+version = "0.1.0"
 default-features = false
 
 [dev-dependencies]
@@ -53,6 +52,3 @@ required-features = ["std"]
 [[test]]
 name = "integration"
 required-features = ["std", "count-release", "maximum-reclamation-freq"]
-
-[profile.dev]
-#opt-level = 1

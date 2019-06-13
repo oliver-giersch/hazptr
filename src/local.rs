@@ -5,7 +5,10 @@ use core::cell::UnsafeCell;
 use core::fmt;
 use core::mem::ManuallyDrop;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{self, Ordering};
+use core::sync::atomic::{
+    self,
+    Ordering::{Release, SeqCst},
+};
 
 #[cfg(feature = "std")]
 use std::error;
@@ -15,9 +18,9 @@ use alloc::{boxed::Box, vec::Vec};
 
 use arrayvec::{ArrayVec, CapacityError};
 
+use crate::bag::{Retired, RetiredBag};
 use crate::global::Global;
 use crate::hazard::{Hazard, Protected};
-use crate::retired::{Retired, RetiredBag};
 use crate::sanitize;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -66,7 +69,7 @@ impl Local {
         let local = unsafe { &mut *self.0.get() };
         if let Some(hazard) = local.hazard_cache.pop() {
             // (LOC:1) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1).
-            hazard.set_protected(protect, Ordering::SeqCst);
+            hazard.set_protected(protect, SeqCst);
             hazard
         } else {
             local.global.get_hazard(protect)
@@ -85,7 +88,7 @@ impl Local {
 
         // (LOC:2) this `Release` store synchronizes-with any `Acquire` load on the
         // `protected` field of the same hazard pointer
-        hazard.set_reserved(Ordering::Release);
+        hazard.set_reserved(Release);
         Ok(())
     }
 
@@ -154,13 +157,16 @@ impl LocalInner {
         self.global.collect_protected_hazards(&mut self.scan_cache);
 
         self.scan_cache.sort_unstable();
-        let scan_cache = &self.scan_cache;
-
-        self.retired_bag.inner.retain(move |retired| {
-            scan_cache
+        // TODO: use `drain_filter` once stable
+        for mut retired in self.retired_bag.inner.split_off(0) {
+            match self
+                .scan_cache
                 .binary_search_by(|protected| protected.address().cmp(&retired.address()))
-                .is_ok()
-        });
+            {
+                Ok(_) => self.retired_bag.inner.push(retired),
+                Err(_) => unsafe { retired.reclaim() },
+            };
+        }
 
         len - self.retired_bag.inner.len()
     }
@@ -174,7 +180,7 @@ impl Drop for LocalInner {
         }
 
         // (LOC:3) this `Release` fence synchronizes-with the `SeqCst` fence (GLO:1)
-        atomic::fence(Ordering::Release);
+        atomic::fence(Release);
 
         let _ = self.scan_hazards();
         // this is safe because the `retired_bag` field is neither accessed afterwards nor dropped
@@ -273,8 +279,8 @@ mod tests {
     use std::ptr::NonNull;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use crate::bag::Retired;
     use crate::global::Global;
-    use crate::retired::Retired;
 
     use super::{Local, HAZARD_CACHE, SCAN_CACHE, SCAN_THRESHOLD};
 
