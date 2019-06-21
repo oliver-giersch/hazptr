@@ -22,15 +22,15 @@
 //! which point it becomes the adopting thread's responsibility to reclaim these
 //! records.
 
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, vec::Vec};
+
 use core::mem;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{
     AtomicPtr,
     Ordering::{Acquire, Relaxed, Release},
 };
-
-#[cfg(not(feature = "std"))]
-use alloc::{boxed::Box, vec::Vec};
 
 pub(crate) type Retired = reclaim::Retired<crate::HP>;
 

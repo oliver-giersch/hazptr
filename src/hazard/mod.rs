@@ -19,16 +19,15 @@
 //! record, it has to ensure that no hazard pointer in this list still protects
 //! the retired value.
 
+mod list;
+
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
-
-mod list;
 
 pub(crate) use self::list::HazardList;
 
 const FREE: *mut () = 0 as *mut ();
-const SCOPED: *mut () = 1 as *mut ();
-const RESERVED: *mut () = 2 as *mut ();
+const RESERVED: *mut () = 1 as *mut ();
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Hazard
@@ -47,13 +46,8 @@ impl Hazard {
         self.protected.store(FREE, order);
     }
 
-    /// Marks the hazard as unused but scoped by a specific `Guarded` for fastest acquisition.
-    #[inline]
-    pub fn set_scoped(&self, order: Ordering) {
-        self.protected.store(SCOPED, order);
-    }
-
-    /// Marks the hazard as unused but reserved by a specific thread for quick acquisition.
+    /// Marks the hazard as unused but reserved by a specific thread for quick
+    /// acquisition.
     #[inline]
     pub fn set_reserved(&self, order: Ordering) {
         self.protected.store(RESERVED, order);
@@ -63,26 +57,33 @@ impl Hazard {
     #[inline]
     pub fn protected(&self, order: Ordering) -> Option<Protected> {
         match self.protected.load(order) {
-            FREE | SCOPED | RESERVED => None,
+            FREE | RESERVED => None,
             ptr => Some(Protected(unsafe { NonNull::new_unchecked(ptr) })),
         }
     }
 
     /// Marks the hazard as actively protecting the given pointer `protect`.
     ///
+    /// The ordering can be specified, but must be `SeqCst`. This is done so the
+    /// ordering is clearly specified at the call site.
+    ///
     /// # Panics
     ///
-    /// In a `debug` build, this operation panics if `ordering` is not `SeqCst`.
+    /// This operation panics if `ordering` is not `SeqCst`.
     #[inline]
     pub fn set_protected(&self, protect: NonNull<()>, order: Ordering) {
         assert_eq!(order, Ordering::SeqCst, "must only be called with `SeqCst`");
         self.protected.store(protect.as_ptr(), order);
     }
 
-    /// Creates new hazard for insertion in the global hazards list protecting the given pointer.
+    /// Creates new hazard for insertion in the global hazards list.
+    ///
+    /// The hazard is initially reserved for the thread initiating the request
+    /// for a hazard.
     #[inline]
-    fn new(protect: NonNull<()>) -> Self {
-        Self { protected: AtomicPtr::new(protect.as_ptr()) }
+    fn new(ptr: *mut ()) -> Self {
+        debug_assert_ne!(ptr, FREE);
+        Self { protected: AtomicPtr::new(ptr) }
     }
 }
 

@@ -47,7 +47,7 @@ where
     Self: Clone + Copy + Sized,
 {
     /// Gets a hazard from local or global storage.
-    fn get_hazard(self, protect: NonNull<()>) -> &'static Hazard;
+    fn get_hazard(self, protect: Option<NonNull<()>>) -> &'static Hazard;
 
     /// Attempts to recycle `hazard` in the thread local cache for hazards
     /// reserved for the current thread.
@@ -109,14 +109,11 @@ impl<'a> LocalAccess for &'a Local {
     /// Attempts to take a reserved hazard from the thread local cache if there
     /// are any.
     #[inline]
-    fn get_hazard(self, protect: NonNull<()>) -> &'static Hazard {
+    fn get_hazard(self, protect: Option<NonNull<()>>) -> &'static Hazard {
         let local = unsafe { &mut *self.0.get() };
-        if let Some(hazard) = local.hazard_cache.pop() {
-            // (LOC:1) this `SeqCst` store synchronizes-with the `SeqCst` fence (GLO:1).
-            hazard.set_protected(protect, SeqCst);
-            hazard
-        } else {
-            global::GLOBAL.get_hazard(protect)
+        match local.hazard_cache.pop() {
+            Some(hazard) => hazard,
+            None => global::GLOBAL.get_hazard(protect),
         }
     }
 

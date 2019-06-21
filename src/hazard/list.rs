@@ -52,16 +52,16 @@
 //! reclamation the worst-case outcome is a record not being reclaimed that
 //! would actually be a valid candidate for reclamation.
 
+#[cfg(not(feature = "std"))]
+use alloc::boxed::Box;
+
 use core::iter::FusedIterator;
 use core::mem;
 use core::ptr::NonNull;
 use core::sync::atomic::{
     self,
-    Ordering::{Acquire, Relaxed, SeqCst},
+    Ordering::{self, Acquire, Relaxed, SeqCst},
 };
-
-#[cfg(not(feature = "std"))]
-use alloc::boxed::Box;
 
 use reclaim::align::CacheAligned;
 use reclaim::leak::Owned;
@@ -69,8 +69,9 @@ use reclaim::leak::Owned;
 type Atomic<T> = reclaim::leak::Atomic<T, reclaim::typenum::U0>;
 type Shared<'g, T> = reclaim::leak::Shared<'g, T, reclaim::typenum::U0>;
 
-use crate::hazard::{Hazard, FREE};
+use crate::hazard::{Hazard, FREE, RESERVED};
 use crate::sanitize::{RELEASE_FAIL, RELEASE_SUCC};
+use std::sync::atomic::Ordering::Release;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HazardList
@@ -101,35 +102,46 @@ impl HazardList {
     /// Acquires an already inserted and inactive hazard pointer or allocates a
     /// new one at the tail and returns a reference to it.
     #[inline]
-    pub fn get_hazard(&self, protect: NonNull<()>) -> &Hazard {
+    pub fn get_hazard(&self, protect: Option<NonNull<()>>) -> &Hazard {
+        // this should be evaluated at compile-time
+        let (ptr, order) = match protect {
+            Some(protect) => (protect.as_ptr(), SeqCst),
+            None => (RESERVED, Release),
+        };
+
+        self.get_hazard_for(ptr, order)
+    }
+
+    #[inline]
+    fn get_hazard_for(&self, ptr: *mut (), order: Ordering) -> &Hazard {
         let mut prev = &self.head;
         // (LIS:2) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
         let mut curr = prev.load_shared(Acquire);
 
-        while let Some(node) = curr.map(Shared::into_ref) {
-            if node.hazard.protected.load(Relaxed) == FREE {
-                // (LIS:3P) this `SeqCst` CAS synchronizes-with the `SeqCst` fence (GLO:1)
-                let prev = node.hazard.protected.compare_and_swap(FREE, protect.as_ptr(), SeqCst);
+        while let Some(node) = curr.map(|shared| Shared::into_ref(shared)) {
+            if node.hazard().protected.load(Relaxed) == FREE {
+                // (LIS:3P) this `Release` CAS synchronizes-with ...
+                let prev = node.hazard.protected.compare_and_swap(FREE, ptr, order);
 
                 if prev == FREE {
-                    return &*node.hazard;
+                    return node.hazard();
                 }
             }
 
-            prev = &*node.next;
+            prev = node.next();
             // (LIS:4) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
-            curr = node.next.load_shared(Acquire);
+            curr.node.next().load_shared(Acquire);
         }
 
-        self.insert_back(prev, protect)
+        self.insert_back(prev, ptr)
     }
 
     /// Allocates and inserts a new node (hazard pointer) at the tail of the list.
     #[inline]
-    fn insert_back(&self, mut tail: &Atomic<HazardNode>, protect: NonNull<()>) -> &Hazard {
+    fn insert_back(&self, mut tail: &Atomic<HazardNode>, ptr: *mut ()) -> &Hazard {
         let node = unsafe {
             Owned::leak_shared(Owned::new(HazardNode {
-                hazard: CacheAligned(Hazard::new(protect)),
+                hazard: CacheAligned(Hazard::new(ptr)),
                 next: CacheAligned(Atomic::null()),
             }))
         };
@@ -195,6 +207,18 @@ impl<'a> FusedIterator for Iter<'a> {}
 struct HazardNode {
     hazard: CacheAligned<Hazard>,
     next: CacheAligned<Atomic<HazardNode>>,
+}
+
+impl HazardNode {
+    #[inline]
+    fn hazard(&self) -> &Hazard {
+        &*self.hazard
+    }
+
+    #[inline]
+    fn next(&self) -> &Atomic<HazardNode> {
+        &*self.next
+    }
 }
 
 #[cfg(test)]

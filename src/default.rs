@@ -1,11 +1,11 @@
 use std::ptr::NonNull;
 
 use reclaim::typenum::Unsigned;
-use reclaim::{LocalReclaim, Protect, Reclaim};
+use reclaim::{GlobalReclaim, Protect, Reclaim};
 
 use crate::hazard::Hazard;
 use crate::local::{Local, LocalAccess, RecycleError};
-use crate::{Guarded, Unlinked, HP};
+use crate::{Guard, Unlinked, HP};
 
 // Per-thread instances of `Local`
 thread_local!(static LOCAL: Local = Local::new());
@@ -16,7 +16,7 @@ pub fn guarded<T, N: Unsigned>() -> impl Protect<Item = T, MarkBits = N, Reclaim
     Guarded::with_access(DefaultAccess)
 }
 
-unsafe impl Reclaim for HP {
+unsafe impl GlobalReclaim for HP {
     #[inline]
     unsafe fn retire<T: 'static, N: Unsigned>(unlinked: Unlinked<T, N>) {
         LOCAL.with(move |local| Self::retire_local(local, unlinked))

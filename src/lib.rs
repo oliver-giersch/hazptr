@@ -150,7 +150,7 @@ cfg_if! {
     if #[cfg(feature = "std")] {
         pub use crate::default::guarded;
         /// A guarded pointer that can be used to acquire hazard pointers.
-        pub type Guarded<T, N> = crate::guarded::Guarded<T, crate::default::DefaultAccess, N>;
+        pub type Guard = crate::guarded::Guard<crate::default::DefaultAccess>;
     } else {
         pub use crate::{
             global::Global,
@@ -158,7 +158,7 @@ cfg_if! {
         };
         /// A **thread local** guarded pointer that can be used to acquire
         /// hazard pointers.
-        pub type LocalGuarded<'a, T, N> = crate::guarded::Guarded<T, &'a Local, N>;
+        pub type LocalGuard<'a> = crate::guarded::Guard<&'a Local>;
 
         /// Creates a new (empty) local guarded pointer that can be used to
         /// acquire hazard pointers.
@@ -182,7 +182,7 @@ use crate::bag::Retired;
 #[derive(Debug, Default, Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub struct HP;
 
-unsafe impl LocalReclaim for HP {
+unsafe impl Reclaim for HP {
     type Local = crate::local::Local;
     // hazard pointers do not require any extra information per each allocated record
     type RecordHeader = ();

@@ -1,4 +1,3 @@
-use core::ptr::NonNull;
 use core::sync::atomic::Ordering::{self, Relaxed, Release, SeqCst};
 
 use reclaim::prelude::*;
@@ -17,63 +16,59 @@ type AcquireResult<'g, T, N> = reclaim::AcquireResult<'g, T, HP, N>;
 
 /// A guarded pointer that can be used to acquire hazard pointers.
 #[derive(Debug)]
-pub struct Guarded<T, L: LocalAccess, N: Unsigned> {
-    hazard: Option<&'static Hazard>,
-    marked: Marked<MarkedNonNull<T, N>>,
+pub struct Guard<L: LocalAccess> {
+    hazard: &'static Hazard,
     local_access: L,
 }
 
-unsafe impl<T, L: LocalAccess + Send, N: Unsigned> Send for Guarded<T, L, N> {}
+unsafe impl<L: LocalAccess + Send> Send for Guard<L> {}
 
-impl<T, L: LocalAccess, N: Unsigned> Clone for Guarded<T, L, N> {
+impl<L: LocalAccess> Clone for Guard<L> {
     #[inline]
     fn clone(&self) -> Self {
-        if let Value(ptr) = self.marked {
-            let protect = ptr.decompose_non_null();
-            let hazard = Some(self.local_access.get_hazard(protect.cast()));
-
-            return Self { hazard, marked: Value(ptr), local_access: self.local_access };
+        let local_access = self.local_access;
+        match self.hazard.protected(Relaxed) {
+            Some(protect) => {
+                Self { hazard: local_access.get_hazard(Some(protect.into_inner())), local_access }
+            }
+            None => Self { hazard: local_access.get_hazard(None), local_access },
         }
-
-        Self { hazard: None, marked: self.marked, local_access: self.local_access }
     }
 }
 
-unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
-    type Item = T;
+macro_rules! release {
+    ($self:ident, $tag:expr) => {{
+        // (GUA:X) this `Release` store synchronizes-with...
+        $self.hazard.set_reserved(Release);
+        Null($tag)
+    }};
+}
+
+unsafe impl<L: LocalAccess> Protect for Guard<L> {
     type Reclaimer = HP;
-    type MarkBits = N;
 
     #[inline]
-    fn marked(&self) -> Marked<Shared<T, N>> {
-        self.marked.map(|ptr| unsafe { Shared::from_marked_non_null(ptr) })
-    }
-
-    #[inline]
-    fn acquire(&mut self, atomic: &Atomic<T, N>, order: Ordering) -> Marked<Shared<T, N>> {
+    fn protect<T, N: Unsigned>(
+        &mut self,
+        atomic: &Atomic<T, N>,
+        order: Ordering,
+    ) -> Marked<Shared<T, N>> {
         match MarkedNonNull::new(atomic.load_raw(Relaxed)) {
-            Null(tag) => self.release_with_tag(tag),
+            Null(tag) => release!(self, tag),
             Value(ptr) => {
                 let mut protect = ptr.decompose_non_null();
-                let hazard = self.unwrap_hazard_and_protect(protect.cast());
+                self.hazard.set_protected(protect.cast(), SeqCst);
 
-                // the initially taken snapshot is now stored in the hazard pointer, but the value
-                // stored in `atomic` may have changed already
                 loop {
                     match MarkedNonNull::new(atomic.load_raw(order)) {
-                        Null(tag) => return self.release_with_tag(tag),
+                        Null(tag) => release!(self, tag),
                         Value(ptr) => {
                             let unmarked = ptr.decompose_non_null();
                             if protect == unmarked {
-                                self.marked = Value(ptr);
-                                // this is safe because `ptr` is now stored in a hazard pointer and
-                                // matches the current value of `atomic`
                                 return Value(unsafe { Shared::from_marked_non_null(ptr) });
                             }
 
-                            // (GUA:2) this `SeqCst` store synchronizes-with the
-                            // `SeqCst` fence (GLO:1)
-                            hazard.set_protected(unmarked.cast(), SeqCst);
+                            self.hazard.set_protected(unmarked.cast(), SeqCst);
                             protect = unmarked;
                         }
                     }
@@ -83,90 +78,51 @@ unsafe impl<T, L: LocalAccess, N: Unsigned> Protect for Guarded<T, L, N> {
     }
 
     #[inline]
-    fn acquire_if_equal(
+    fn protect_if_equal<T, N: Unsigned>(
         &mut self,
         atomic: &Atomic<T, N>,
         expected: MarkedPtr<T, N>,
         order: Ordering,
-    ) -> AcquireResult<T, N> {
+    ) -> Result<Marked<Shared<T, N>>, NotEqualError> {
         let raw = atomic.load_raw(Relaxed);
         if raw != expected {
             return Err(NotEqualError);
         }
 
-        match MarkedNonNull::new(raw) {
-            Null(tag) => Ok(self.release_with_tag(tag)),
+        match MarkedNonNull::new(atomic.load_raw(order)) {
+            Null(tag) => Ok(release!(self, tag)),
             Value(ptr) => {
                 let unmarked = ptr.decompose_non_null();
-                let hazard = self.unwrap_hazard_and_protect(unmarked.cast());
+                self.hazard.set_protected(unmarked.cast(), SeqCst);
 
                 if atomic.load_raw(order) != ptr {
-                    hazard.set_scoped(Release);
-                    return Err(NotEqualError);
+                    self.hazard.set_reserved(Release);
+                    Err(NotEqualError)
+                } else {
+                    Ok(unsafe { Marked::from_marked_non_null(ptr) })
                 }
-
-                self.marked = Value(ptr);
-                Ok(Value(unsafe { Shared::from_marked_non_null(ptr) }))
             }
         }
     }
-
-    #[inline]
-    fn release(&mut self) {
-        let _ = self.release_with_tag(0);
-    }
 }
 
-impl<T, L: LocalAccess, N: Unsigned> Guarded<T, L, N> {
-    /// Creates a new guarded
+impl<L: LocalAccess> Guard<L> {
+    /// Creates a new [`Guard`] with the given means for `local_access`.
     #[inline]
     pub fn with_access(local_access: L) -> Self {
-        Self { hazard: None, marked: Marked::default(), local_access }
-    }
-
-    #[inline]
-    fn release_with_tag(&mut self, tag: usize) -> Marked<Shared<T, N>> {
-        if cfg!(feature = "count-release") {
-            LocalAccess::increase_ops_count(self.local_access);
-        }
-
-        if let Some(hazard) = self.hazard {
-            // (GUA:3) this `Release` store synchronizes-with ...
-            hazard.set_scoped(Release);
-        }
-
-        self.marked = Null(tag);
-        Null(tag)
-    }
-
-    #[inline]
-    fn unwrap_hazard_and_protect(&mut self, protect: NonNull<()>) -> &'static Hazard {
-        match self.hazard.take() {
-            Some(hazard) => {
-                hazard.set_protected(protect.cast(), SeqCst);
-                self.hazard = Some(hazard);
-                hazard
-            }
-            None => {
-                let hazard = self.local_access.get_hazard(protect.cast());
-                self.hazard = Some(hazard);
-                hazard
-            }
-        }
+        Self { hazard: local_access.get_hazard(None), local_access }
     }
 }
 
-impl<T, L: LocalAccess, N: Unsigned> Drop for Guarded<T, L, N> {
+impl<L: LocalAccess> Drop for Guard<L> {
     #[inline]
     fn drop(&mut self) {
-        if let Some(hazard) = self.hazard {
-            if cfg!(feature = "count-release") {
-                LocalAccess::increase_ops_count(self.local_access);
-            }
+        if cfg!(feature = "count-release") {
+            self.local_access.increase_ops_count();
+        }
 
-            if self.local_access.try_recycle_hazard(hazard).is_err() {
-                hazard.set_free(Release);
-            }
+        if self.local_access.try_recycle_hazard(self.hazard).is_err() {
+            self.hazard.set_free(Release);
         }
     }
 }
@@ -188,7 +144,7 @@ mod tests {
 
     type MarkedPtr = reclaim::MarkedPtr<i32, U0>;
 
-    type Guarded<'a> = super::Guarded<i32, &'a Local, U0>;
+    type Guarded<'a> = super::Guard<i32, &'a Local, U0>;
 
     #[test]
     fn empty() {

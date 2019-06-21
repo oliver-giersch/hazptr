@@ -33,16 +33,16 @@ impl Global {
         Self { hazards: HazardList::new(), abandoned: AbandonedBags::new() }
     }
 
-    /// Acquires a hazard pointer from the global list and sets it to protect
-    /// the given pointer.
+    /// Acquires a hazard pointer from the global list and reserves it for the
+    /// thread requesting it.
     ///
     /// This operation traverses the entire list from the head, trying to find
     /// an unused hazard.
     /// If it does not find one, it allocates a new one and appends it to the
     /// end of the list.
     #[inline]
-    pub(crate) fn get_hazard(&'static self, ptr: NonNull<()>) -> &'static Hazard {
-        self.hazards.get_hazard(ptr)
+    pub(crate) fn get_hazard(&'static self, protect: Option<NonNull<()>>) -> &'static Hazard {
+        self.hazards.get_hazard(protect)
     }
 
     /// Collects all currently active hazard pointers into the supplied `Vec`.
