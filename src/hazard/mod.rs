@@ -27,7 +27,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 pub(crate) use self::list::HazardList;
 
 const FREE: *mut () = 0 as *mut ();
-const RESERVED: *mut () = 1 as *mut ();
+const THREAD_RESERVED: *mut () = 1 as *mut ();
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Hazard
@@ -49,15 +49,15 @@ impl Hazard {
     /// Marks the hazard as unused but reserved by a specific thread for quick
     /// acquisition.
     #[inline]
-    pub fn set_reserved(&self, order: Ordering) {
-        self.protected.store(RESERVED, order);
+    pub fn set_thread_reserved(&self, order: Ordering) {
+        self.protected.store(THREAD_RESERVED, order);
     }
 
     /// Gets the protected pointer, if there is one.
     #[inline]
     pub fn protected(&self, order: Ordering) -> Option<Protected> {
         match self.protected.load(order) {
-            FREE | RESERVED => None,
+            FREE | THREAD_RESERVED => None,
             ptr => Some(Protected(unsafe { NonNull::new_unchecked(ptr) })),
         }
     }
@@ -123,16 +123,16 @@ mod tests {
     fn protect_hazard() {
         let ptr = NonNull::from(&1);
 
-        let hazard = Hazard::new(ptr.cast());
+        let hazard = Hazard::new(ptr.cast().as_ptr());
         assert_eq!(ptr.as_ptr() as usize, hazard.protected(Ordering::Relaxed).unwrap().address());
 
         hazard.set_free(Ordering::Relaxed);
         assert_eq!(None, hazard.protected(Ordering::Relaxed));
         assert_eq!(FREE, hazard.protected.load(Ordering::Relaxed));
 
-        hazard.set_reserved(Ordering::Relaxed);
+        hazard.set_thread_reserved(Ordering::Relaxed);
         assert_eq!(None, hazard.protected(Ordering::Relaxed));
-        assert_eq!(RESERVED, hazard.protected.load(Ordering::Relaxed));
+        assert_eq!(THREAD_RESERVED, hazard.protected.load(Ordering::Relaxed));
 
         hazard.set_protected(ptr.cast(), Ordering::SeqCst);
         assert_eq!(ptr.as_ptr() as usize, hazard.protected(Ordering::Relaxed).unwrap().address());

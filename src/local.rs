@@ -1,20 +1,17 @@
 //! Thread local state and caches for reserving hazard pointers and storing
 //! retired records.
 
-use core::cell::UnsafeCell;
-use core::fmt;
-use core::mem::ManuallyDrop;
-use core::ptr::{self, NonNull};
-use core::sync::atomic::{
-    self,
-    Ordering::{Release, SeqCst},
-};
-
 #[cfg(feature = "std")]
 use std::error;
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
+
+use core::cell::UnsafeCell;
+use core::fmt;
+use core::mem::ManuallyDrop;
+use core::ptr::{self, NonNull};
+use core::sync::atomic::{self, Ordering::Release};
 
 use arrayvec::{ArrayVec, CapacityError};
 
@@ -38,7 +35,7 @@ const HAZARD_CACHE: usize = 16;
 const SCAN_CACHE: usize = 128;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// LocalAccess
+// LocalAccess (trait)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// A trait for abstracting over different means of accessing thread local state
@@ -74,6 +71,13 @@ where
 /// pointers.
 #[derive(Debug)]
 pub struct Local(UnsafeCell<LocalInner>);
+
+impl Default for Local {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Local {
     /// Creates a new container for the thread local state.
@@ -129,7 +133,7 @@ impl<'a> LocalAccess for &'a Local {
 
         // (LOC:2) this `Release` store synchronizes-with any `Acquire` load on the
         // `protected` field of the same hazard pointer
-        hazard.set_reserved(Release);
+        hazard.set_thread_reserved(Release);
         Ok(())
     }
 
@@ -183,7 +187,13 @@ impl LocalInner {
         global::GLOBAL.collect_protected_hazards(&mut self.scan_cache);
 
         self.scan_cache.sort_unstable();
-        // TODO: use `drain_filter` once stable
+        self.reclaim_unprotected_records();
+
+        len - self.retired_bag.inner.len()
+    }
+
+    #[cfg(not(feature = "nightly"))]
+    fn reclaim_unprotected_records(&mut self) {
         for mut retired in self.retired_bag.inner.split_off(0) {
             match self
                 .scan_cache
@@ -193,8 +203,22 @@ impl LocalInner {
                 Err(_) => unsafe { retired.reclaim() },
             };
         }
+    }
 
-        len - self.retired_bag.inner.len()
+    #[cfg(feature = "nightly")]
+    fn reclaim_unprotected_records(&mut self) {
+        let scan_cache = &self.scan_cache;
+        self.retired_bag.inner.drain_filter(|retired| {
+            match scan_cache
+                .binary_search_by(|protected| protected.address().cmp(&retired.address()))
+            {
+                Ok(_) => false,
+                Err(_) => {
+                    unsafe { retired.reclaim() };
+                    true
+                }
+            }
+        });
     }
 }
 
@@ -276,7 +300,7 @@ mod tests {
         let ptr = NonNull::from(&());
 
         (0..HAZARD_CACHE)
-            .map(|_| local.get_hazard(ptr.cast()))
+            .map(|_| local.get_hazard(Some(ptr.cast())))
             .collect::<Box<[_]>>()
             .iter()
             .try_for_each(|hazard| local.try_recycle_hazard(hazard))
@@ -292,8 +316,9 @@ mod tests {
         }
 
         // takes all hazards out of local cache and then allocates a new one.
-        let hazards: Box<[_]> = (0..HAZARD_CACHE).map(|_| local.get_hazard(ptr.cast())).collect();
-        let extra = local.get_hazard(ptr.cast());
+        let hazards: Box<[_]> =
+            (0..HAZARD_CACHE).map(|_| local.get_hazard(Some(ptr.cast()))).collect();
+        let extra = local.get_hazard(Some(ptr.cast()));
 
         {
             // local hazard cache is empty

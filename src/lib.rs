@@ -109,6 +109,7 @@
 //! [reclaim]: https://github.com/oliver-giersch/reclaim
 
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
+#![cfg_attr(feature = "nightly", feature(drain_filter))]
 #![warn(missing_docs)]
 
 #[cfg(not(feature = "std"))]
@@ -148,27 +149,13 @@ mod local;
 
 cfg_if! {
     if #[cfg(feature = "std")] {
-        pub use crate::default::guarded;
         /// A guarded pointer that can be used to acquire hazard pointers.
-        pub type Guard = crate::guarded::Guard<crate::default::DefaultAccess>;
+        pub type Guard = crate::default::Guard;
     } else {
-        pub use crate::{
-            global::Global,
-            local::{Local, RecycleErr},
-        };
+        pub use crate::local::{Local, RecycleErr};
         /// A **thread local** guarded pointer that can be used to acquire
         /// hazard pointers.
         pub type LocalGuard<'a> = crate::guarded::Guard<&'a Local>;
-
-        /// Creates a new (empty) local guarded pointer that can be used to
-        /// acquire hazard pointers.
-        #[inline]
-        pub fn guarded<'a, T: 'a, N: Unsigned + 'static>(
-            local: &'a Local
-        ) -> impl reclaim::Protect<Item = T, MarkBits = N, Reclaimer = HP> + 'a
-        {
-            LocalGuarded::with_access(local)
-        }
     }
 }
 
@@ -213,7 +200,7 @@ mod sanitize {
     pub const RELAXED_LOAD: Ordering = Ordering::Relaxed;
     pub const RELAXED_STORE: Ordering = Ordering::Relaxed;
 
-    pub const RELEASE_SUCC: Ordering = Ordering::Release;
+    pub const RELEASE_SUCCESS: Ordering = Ordering::Release;
     pub const RELEASE_FAIL: Ordering = Ordering::Relaxed;
 }
 
@@ -224,6 +211,6 @@ mod sanitize {
     pub const RELAXED_LOAD: Ordering = Ordering::Acquire;
     pub const RELAXED_STORE: Ordering = Ordering::Release;
 
-    pub const RELEASE_SUCC: Ordering = Ordering::AcqRel;
+    pub const RELEASE_SUCCESS: Ordering = Ordering::AcqRel;
     pub const RELEASE_FAIL: Ordering = Ordering::Acquire;
 }

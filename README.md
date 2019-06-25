@@ -63,6 +63,7 @@ The following features are defined for this crate:
 - `count-release`
 - `maximum-reclamation-freq`
 - `reduced-reclamation-freq`
+- `nightly`
 
 By default, a thread initiates a GC scan and attempts to flush its cache of
 retired records, once it has retired a certain threshold count of records.
@@ -84,6 +85,10 @@ when no feature is selected.
 Generally, a lower reclamation frequency is better performance-wise, but could
 lead to the accumulation of large amounts of retired but unreclaimed records
 (i.e. garbage).
+
+The `nightly` feature enables the use of `Vec::drain_filter` for reclaiming
+retired records, which may be slightly more performant than the solutions
+available in the current stable version.
 
 ### Usage in `#[no_std]` environments
 

@@ -1,22 +1,20 @@
 use std::ptr::NonNull;
 
 use reclaim::typenum::Unsigned;
-use reclaim::{GlobalReclaim, Protect, Reclaim};
+use reclaim::{GlobalReclaim, Reclaim};
+
+pub type Guard = crate::guarded::Guard<DefaultAccess>;
 
 use crate::hazard::Hazard;
 use crate::local::{Local, LocalAccess, RecycleError};
-use crate::{Guard, Unlinked, HP};
+use crate::{Unlinked, HP};
 
 // Per-thread instances of `Local`
 thread_local!(static LOCAL: Local = Local::new());
 
-/// Creates a new (empty) guarded pointer that can be used to acquire hazard pointers.
-#[inline]
-pub fn guarded<T, N: Unsigned>() -> impl Protect<Item = T, MarkBits = N, Reclaimer = HP> {
-    Guarded::with_access(DefaultAccess)
-}
-
 unsafe impl GlobalReclaim for HP {
+    type Guard = Guard;
+
     #[inline]
     unsafe fn retire<T: 'static, N: Unsigned>(unlinked: Unlinked<T, N>) {
         LOCAL.with(move |local| Self::retire_local(local, unlinked))
@@ -25,6 +23,20 @@ unsafe impl GlobalReclaim for HP {
     #[inline]
     unsafe fn retire_unchecked<T, N: Unsigned>(unlinked: Unlinked<T, N>) {
         LOCAL.with(move |local| Self::retire_local_unchecked(local, unlinked))
+    }
+}
+
+impl Guard {
+    #[inline]
+    pub fn new() -> Self {
+        Self::with_access(DefaultAccess)
+    }
+}
+
+impl Default for Guard {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -37,7 +49,7 @@ pub struct DefaultAccess;
 
 impl LocalAccess for DefaultAccess {
     #[inline]
-    fn get_hazard(self, protect: NonNull<()>) -> &'static Hazard {
+    fn get_hazard(self, protect: Option<NonNull<()>>) -> &'static Hazard {
         LOCAL.with(|local| local.get_hazard(protect))
     }
 
@@ -51,19 +63,5 @@ impl LocalAccess for DefaultAccess {
     #[inline]
     fn increase_ops_count(self) {
         LOCAL.with(|local| local.increase_ops_count());
-    }
-}
-
-impl<T, N: Unsigned> Guarded<T, N> {
-    #[inline]
-    pub fn new() -> Self {
-        Self::with_access(DefaultAccess)
-    }
-}
-
-impl<T, N: Unsigned> Default for Guarded<T, N> {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
     }
 }

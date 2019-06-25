@@ -64,10 +64,11 @@ impl Global {
         }
     }
 
-    /// Stores an exiting thread's non-empty bag of retired records, which could
-    /// not be reclaimed at the time the thread exited.
+    /// Stores an exiting thread's (non-empty) bag of retired records, which
+    /// could not be reclaimed at the time the thread exited.
     #[inline]
     pub(crate) fn abandon_retired_bag(&'static self, bag: Box<RetiredBag>) {
+        debug_assert!(!bag.inner.is_empty());
         self.abandoned.push(bag);
     }
 

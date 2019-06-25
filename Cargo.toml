@@ -1,7 +1,7 @@
 [package]
 name = "hazptr"
 description = "hazard pointer based concurrent memory reclamation"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Oliver Giersch"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
@@ -19,6 +19,9 @@ std = ["arrayvec/std", "reclaim/std"]
 # reclamation threshold is based on count of hazard pointer releases
 count-release = []
 
+# enabling allows the use of some improvements only available on nightly
+nightly = []
+
 # attempt to reclaim records after every operation (more expensive)
 maximum-reclamation-freq = []
 # attempt to reclaim records less often (less expensive)
@@ -34,7 +37,7 @@ version = "0.4.10"
 default-features = false
 
 [dependencies.reclaim]
-#version = "0.1.0"
+# version = "0.2.0"
 git = "https://github.com/oliver-giersch/reclaim"
 branch = "0.2.x"
 default-features = false

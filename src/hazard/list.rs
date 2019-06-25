@@ -60,7 +60,7 @@ use core::mem;
 use core::ptr::NonNull;
 use core::sync::atomic::{
     self,
-    Ordering::{self, Acquire, Relaxed, SeqCst},
+    Ordering::{self, Acquire, Relaxed, Release, SeqCst},
 };
 
 use reclaim::align::CacheAligned;
@@ -69,9 +69,8 @@ use reclaim::leak::Owned;
 type Atomic<T> = reclaim::leak::Atomic<T, reclaim::typenum::U0>;
 type Shared<'g, T> = reclaim::leak::Shared<'g, T, reclaim::typenum::U0>;
 
-use crate::hazard::{Hazard, FREE, RESERVED};
-use crate::sanitize::{RELEASE_FAIL, RELEASE_SUCC};
-use std::sync::atomic::Ordering::Release;
+use crate::hazard::{Hazard, FREE, THREAD_RESERVED};
+use crate::sanitize::{RELEASE_FAIL, RELEASE_SUCCESS};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HazardList
@@ -106,7 +105,7 @@ impl HazardList {
         // this should be evaluated at compile-time
         let (ptr, order) = match protect {
             Some(protect) => (protect.as_ptr(), SeqCst),
-            None => (RESERVED, Release),
+            None => (THREAD_RESERVED, Release),
         };
 
         self.get_hazard_for(ptr, order)
@@ -118,7 +117,7 @@ impl HazardList {
         // (LIS:2) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
         let mut curr = prev.load_shared(Acquire);
 
-        while let Some(node) = curr.map(|shared| Shared::into_ref(shared)) {
+        while let Some(node) = curr.map(Shared::into_ref) {
             if node.hazard().protected.load(Relaxed) == FREE {
                 // (LIS:3P) this `Release` CAS synchronizes-with ...
                 let prev = node.hazard.protected.compare_and_swap(FREE, ptr, order);
@@ -130,7 +129,7 @@ impl HazardList {
 
             prev = node.next();
             // (LIS:4) this `Acquire` load synchronizes-with the `Release` CAS (LIS:5)
-            curr.node.next().load_shared(Acquire);
+            curr = node.next().load_shared(Acquire);
         }
 
         self.insert_back(prev, ptr)
@@ -149,7 +148,7 @@ impl HazardList {
         loop {
             // (LIS:5) this `Release` CAS synchronizes-with the `Acquire` loads (LIS:1), (LIS:2),
             // (LIS:4) and the `Acquire` fence (LIS:7)
-            match tail.compare_exchange_weak(Shared::none(), node, RELEASE_SUCC, RELEASE_FAIL) {
+            match tail.compare_exchange_weak(Shared::none(), node, RELEASE_SUCCESS, RELEASE_FAIL) {
                 Ok(_) => return &*Shared::into_ref(node).hazard,
                 Err(fail) => {
                     // (LIS:6) this `Acquire` fence synchronizes-with the `Release` CAS (LIS:5)
@@ -181,6 +180,7 @@ impl Drop for HazardList {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Iterator for a `HazardList`
+#[derive(Debug)]
 pub(crate) struct Iter<'a> {
     current: Option<Shared<'a, HazardNode>>,
 }
@@ -204,6 +204,7 @@ impl<'a> FusedIterator for Iter<'a> {}
 // HazardNode
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug)]
 struct HazardNode {
     hazard: CacheAligned<Hazard>,
     next: CacheAligned<Atomic<HazardNode>>,
@@ -233,7 +234,7 @@ mod tests {
         let ptr = NonNull::new(0xDEAD_BEEF as *mut ()).unwrap();
 
         let list = HazardList::new();
-        let hazard = list.get_hazard(ptr);
+        let hazard = list.get_hazard(Some(ptr));
         assert_eq!(hazard.protected.load(Ordering::Relaxed), 0xDEAD_BEEF as *mut ());
     }
 
@@ -242,9 +243,9 @@ mod tests {
         let ptr = NonNull::new(0xDEAD_BEEF as *mut ()).unwrap();
 
         let list = HazardList::new();
-        let _ = list.get_hazard(ptr);
-        let _ = list.get_hazard(ptr);
-        let _ = list.get_hazard(ptr);
+        let _ = list.get_hazard(Some(ptr));
+        let _ = list.get_hazard(Some(ptr));
+        let _ = list.get_hazard(Some(ptr));
 
         assert!(list
             .iter()

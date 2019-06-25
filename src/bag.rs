@@ -98,7 +98,7 @@ impl AbandonedBags {
     /// Adds a new abandoned retired bag to the front of the queue.
     #[inline]
     pub fn push(&self, abandoned: Box<RetiredBag>) {
-        let leaked: &mut RetiredBag = Box::leak(abandoned); // makes CLion happy
+        let leaked = Box::leak(abandoned);
 
         loop {
             let head = self.head.load(Relaxed);

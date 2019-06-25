@@ -1,4 +1,8 @@
-use std::borrow::Borrow;
+// implementation is currently defunct
+
+fn main() {}
+
+/* use std::borrow::Borrow;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::mem;
@@ -8,7 +12,7 @@ use std::thread;
 
 mod ordered;
 
-use crate::ordered::{Guards, OrderedSet};
+use crate::ordered::OrderedSet;
 
 const DEFAULT_BUCKETS: usize = 256;
 
@@ -118,14 +122,14 @@ where
 {
     /// Returns `true` if the set contains the given `value`.
     #[inline]
-    pub fn contains<Q>(&self, value: &Q, guards: &mut Guards<T>) -> bool
+    pub fn contains<Q>(&self, value: &Q) -> bool
     where
         T: Borrow<Q>,
         Q: Hash + Ord,
     {
         let set = &self.buckets[Self::make_hash(&self.hash_builder, value, self.size)];
-        let res = set.get(value, guards).is_some();
-        guards.release_all();
+        let res = set.get(value).is_some();
+        //guards.release_all();
 
         res
     }
@@ -138,13 +142,13 @@ where
     /// [Hash]: std::hash::Hash
     /// [Eq]: std::cmp::Eq
     #[inline]
-    pub fn get<'g, Q>(&self, value: &Q, guards: &'g mut Guards<T>) -> Option<&'g T>
+    pub fn get<'g, Q>(&self, value: &Q) -> Option<&'g T>
     where
         T: Borrow<Q>,
         Q: Hash + Ord,
     {
         let set = &self.buckets[Self::make_hash(&self.hash_builder, value, self.size)];
-        set.get(value, guards)
+        set.get(value)
     }
 
     /// Adds a value to the set.
@@ -152,9 +156,9 @@ where
     /// If the set did not have this value present, `true` is returned.
     /// If the set did have this value present, `false` is returned.
     #[inline]
-    pub fn insert(&self, value: T, guards: &mut Guards<T>) -> bool {
+    pub fn insert(&self, value: T) -> bool {
         let set = &self.buckets[Self::make_hash(&self.hash_builder, &value, self.size)];
-        set.insert_node(value, guards)
+        set.insert_node(value)
     }
 
     /// Removes a value from the set. Returns whether the value was
@@ -167,13 +171,13 @@ where
     /// [Hash]: std::hash::Hash
     /// [Eq]: std::cmp::Eq
     #[inline]
-    pub fn remove<Q>(&self, value: &Q, guards: &mut Guards<T>) -> bool
+    pub fn remove<Q>(&self, value: &Q) -> bool
     where
         T: Borrow<Q>,
         Q: Ord + Hash,
     {
         let set = &self.buckets[Self::make_hash(&self.hash_builder, value, self.size)];
-        set.remove_node(value, guards)
+        set.remove_node(value)
     }
 }
 
@@ -230,34 +234,33 @@ impl Ord for DropI8<'_> {
 
 fn test_insert_remove() {
     let set = HashSet::with_buckets(1);
-    let mut guards = Guards::new();
 
     // insert
-    assert!(set.insert(0, &mut guards));
-    assert!(set.insert(1, &mut guards));
-    assert!(set.insert(-10, &mut guards));
-    assert!(set.insert(10, &mut guards));
-    assert!(set.insert(5, &mut guards));
-    assert!(set.insert(-5, &mut guards));
-    assert!(set.insert(7, &mut guards));
-    assert!(set.insert(-2, &mut guards));
+    assert!(set.insert(0));
+    assert!(set.insert(1));
+    assert!(set.insert(-10));
+    assert!(set.insert(10));
+    assert!(set.insert(5));
+    assert!(set.insert(-5));
+    assert!(set.insert(7));
+    assert!(set.insert(-2));
 
     // remove
-    assert!(set.remove(&-10, &mut guards));
-    assert!(set.remove(&-5, &mut guards));
-    assert!(set.remove(&-2, &mut guards));
-    assert!(set.remove(&0, &mut guards));
-    assert!(set.remove(&5, &mut guards));
-    assert!(set.remove(&7, &mut guards));
-    assert!(set.remove(&10, &mut guards));
+    assert!(set.remove(&-10));
+    assert!(set.remove(&-5));
+    assert!(set.remove(&-2));
+    assert!(set.remove(&0));
+    assert!(set.remove(&5));
+    assert!(set.remove(&7));
+    assert!(set.remove(&10));
 
-    assert!(!set.contains(&-10, &mut guards));
-    assert!(!set.contains(&-5, &mut guards));
-    assert!(!set.contains(&-2, &mut guards));
-    assert!(!set.contains(&0, &mut guards));
-    assert!(!set.contains(&5, &mut guards));
-    assert!(!set.contains(&7, &mut guards));
-    assert!(!set.contains(&10, &mut guards));
+    assert!(!set.contains(&-10));
+    assert!(!set.contains(&-5));
+    assert!(!set.contains(&-2));
+    assert!(!set.contains(&0));
+    assert!(!set.contains(&5));
+    assert!(!set.contains(&7));
+    assert!(!set.contains(&10));
 
     println!("test_insert_remove: success");
 }
@@ -266,16 +269,15 @@ fn test_random() {
     use rand::prelude::*;
 
     let set = HashSet::with_buckets(1);
-    let mut guards = Guards::new();
 
     let mut conflicts = 0;
     for _ in 0..10_000 {
         let value: i8 = rand::thread_rng().gen();
-        if set.contains(&value, &mut guards) {
+        if set.contains(&value) {
             conflicts += 1;
-            set.remove(&value, &mut guards);
+            set.remove(&value);
         } else {
-            set.insert(value, &mut guards);
+            set.insert(value);
         }
     }
 
@@ -310,7 +312,6 @@ fn main() {
         .map(|id| {
             let set = Arc::clone(&set);
             thread::spawn(move || {
-                let mut guards = Guards::new();
                 let mut alloc_count = 0u32;
 
                 for ops in 0..OPS_COUNT {
@@ -319,10 +320,10 @@ fn main() {
                     }
 
                     let value: i8 = rand::thread_rng().gen();
-                    if set.contains(&value, &mut guards) {
-                        set.remove(&value, &mut guards);
+                    if set.contains(&value) {
+                        set.remove(&value);
                     } else {
-                        set.insert(DropI8(value, &THREAD_COUNTS[id]), &mut guards);
+                        set.insert(DropI8(value, &THREAD_COUNTS[id]));
                         alloc_count += 1;
                     }
                 }
@@ -343,3 +344,4 @@ fn main() {
     );
     println!("success, no leaks detected.");
 }
+*/
