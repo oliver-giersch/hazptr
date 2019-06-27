@@ -38,6 +38,8 @@ where
             let elem = node.elem();
             if let Insert { prev, next } = self.find(elem, guards) {
                 node.next().store(next, Relaxed);
+                // (ORD:1) this `Release` CAS synchronizes-with the `Acquire` CAS (ORD:3) and the
+                // `Acquire` loads (ORD:4) and (ORD:5)
                 match prev.compare_exchange(next, node, Release, Relaxed) {
                     Ok(_) => break true,
                     Err(failure) => node = failure.input,
@@ -64,14 +66,14 @@ where
                 Insert { .. } => break false,
                 Found { prev, curr, next } => {
                     let next_marked = Marked::marked(next, DELETE_TAG);
-                    // (ORD:x) this `Acquire` CAS synchronizes-with the `Release` CAS (ITE:d),
-                    // (ORD:y), (ORD:a)
+                    // (ORD:2) this `Acquire` CAS synchronizes-with the `Release` CAS (ORD:1),
+                    // (ORD:3), (ORD:a)
                     if curr.next().compare_exchange(next, next_marked, Acquire, Relaxed).is_err() {
                         continue;
                     }
 
-                    // (ORD:3) this `Release` CAS synchronizes-with the `Acquire` loads (ITE:1),
-                    // (ITE2) and the `Acquire` CAS (ORD:2)
+                    // (ORD:3) this `Release` CAS synchronizes-with the `Acquire` CAS (ORD:2) and
+                    // the `Acquire` loads (ORD:4) and ORD:5)
                     match prev.compare_exchange(curr, next, Release, Relaxed) {
                         Ok(unlinked) => unsafe { unlinked.retire() },
                         Err(_) => {
@@ -102,6 +104,9 @@ where
         }
     }
 
+    // this function uses unsafe code internally, but the interface is safe:
+    // the three guards are each advanced in turn and are guaranteed to eventually protect all of
+    // the returned references.
     fn find<'set, 'g, Q>(&'set self, value: &Q, guards: &'g mut Guards) -> FindResult<'set, 'g, T>
     where
         T: Borrow<Q>,
@@ -109,7 +114,11 @@ where
         'g: 'set,
     {
         'retry: loop {
+            // prev is protected by guards.prev except in the first iteration
             let mut prev: &'g Atomic<Node<T>> = unsafe { &*(&self.head as *const _) };
+            // (ORD:4) this `Acquire` load synchronizes-with the `Release` CAS (ORD:1), (ORD:3) and
+            // (ORD:6)
+            // prev is protected by guards.curr and the node holding prev by guards.prev
             while let Some(curr_marked) = prev.load(Acquire, &mut guards.curr) {
                 let (curr, curr_tag) = Shared::decompose(curr_marked);
                 if curr_tag == DELETE_TAG {
@@ -119,6 +128,9 @@ where
                 let curr_next: &'g Atomic<Node<_>> = unsafe { &*(curr.next() as *const _) };
                 let next_raw = curr_next.load_raw(Relaxed);
 
+                // (ORD:5) this `Acquire` load synchronizes-with the `Release`CAS (ORD:1),
+                // (ORD:3) and (ORD:6)
+                // next is protected by guards.next
                 match curr_next.load_marked_if_equal(next_raw, Acquire, &mut guards.next) {
                     Err(_) => continue 'retry,
                     Ok(next_marked) => {
@@ -128,28 +140,21 @@ where
 
                         let (next, next_tag) = Marked::decompose(next_marked);
                         if next_tag == DELETE_TAG {
+                            // (ORD:6) this `Release` CAS synchronizes-with the `Acquire` CAS
+                            // (ORD:2) and the `Acquire` loads (ORD:4) and (ORD:5)
                             match prev.compare_exchange(curr, next, Release, Relaxed) {
                                 Ok(unlinked) => unsafe { unlinked.retire() },
                                 Err(_) => continue 'retry,
                             };
                         } else {
-                            unsafe {
-                                match curr.elem().borrow().cmp(value) {
-                                    Equal => {
-                                        return Found {
-                                            prev,
-                                            curr: mem::transmute(curr),
-                                            next: mem::transmute(next),
-                                        }
-                                    }
-                                    Greater => {
-                                        return Insert { prev, next: Some(mem::transmute(curr)) }
-                                    }
-                                    _ => {}
-                                };
-                            }
+                            match curr.elem().borrow().cmp(value) {
+                                Equal => return unsafe { found_result(prev, curr, next) },
+                                Greater => return unsafe { insert_result(prev, curr) },
+                                _ => {}
+                            };
 
                             prev = curr_next;
+                            // the old prev is no longer be protected afterwards
                             mem::swap(&mut guards.prev, &mut guards.curr);
                         }
                     }
@@ -167,9 +172,28 @@ impl<T> Drop for OrderedSet<T> {
         let mut node = self.head.take();
         while let Some(mut curr) = node {
             node = curr.next.take();
-            mem::drop(curr);
         }
     }
+}
+
+#[inline]
+unsafe fn found_result<'a, 'set: 'a, 'g: 'set, T: 'static>(
+    prev: &'set Atomic<Node<T>>,
+    curr: Shared<'a, Node<T>>,
+    next: Marked<Shared<'a, Node<T>>>,
+) -> FindResult<'set, 'g, T> {
+    let curr = Shared::from_marked_ptr(curr.into_marked_ptr());
+    let next = Marked::from_marked_ptr(next.into_marked_ptr());
+    Found { prev, curr, next }
+}
+
+#[inline]
+unsafe fn insert_result<'a, 'set: 'a, 'g: 'set, T: 'static>(
+    prev: &'set Atomic<Node<T>>,
+    curr: Shared<'a, Node<T>>,
+) -> FindResult<'set, 'g, T> {
+    let next = Some(Shared::from_marked_ptr(curr.into_marked_ptr()));
+    Insert { prev, next }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -5,7 +5,7 @@ use std::sync::{
 use std::thread;
 
 use hazptr::typenum::U0;
-use hazptr::{guarded, Owned};
+use hazptr::{Guard, Owned};
 
 type Atomic<T> = hazptr::Atomic<T, U0>;
 
@@ -35,8 +35,8 @@ fn abandon_on_panic() {
         let barrier1 = Arc::clone(&barrier1);
         let barrier2 = Arc::clone(&barrier2);
         thread::spawn(move || {
-            let mut guard1 = guarded();
-            let mut guard2 = guarded();
+            let mut guard1 = Guard::new();
+            let mut guard2 = Guard::new();
 
             let r1 = records[0].load(Ordering::Relaxed, &mut guard1);
             let r2 = records[1].load(Ordering::Relaxed, &mut guard2);
