@@ -1,26 +1,30 @@
 // implementation is currently defunct
 
-fn main() {}
+mod ordered;
 
-/* use std::borrow::Borrow;
+use std::borrow::Borrow;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::mem;
 use std::slice;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread;
 
-mod ordered;
+use hazptr::reclaim;
+use hazptr::Guard;
+use reclaim::prelude::*;
 
 use crate::ordered::OrderedSet;
 
-const DEFAULT_BUCKETS: usize = 256;
+const DEFAULT_BUCKETS: usize = 64;
 
-/// A concurrent hash set.
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// HashSet
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub struct HashSet<T, S = RandomState> {
-    size: usize,
-    buckets: Box<[OrderedSet<T>]>,
-    hash_builder: S,
+    inner: Arc<RawHashSet<T, S>>,
 }
 
 impl<T: Ord + Hash> Default for HashSet<T, RandomState> {
@@ -57,9 +61,11 @@ where
     #[inline]
     pub fn with_hasher(hash_builder: S) -> Self {
         Self {
-            size: DEFAULT_BUCKETS,
-            buckets: Self::allocate_buckets(DEFAULT_BUCKETS),
-            hash_builder,
+            inner: Arc::new(RawHashSet {
+                size: DEFAULT_BUCKETS,
+                buckets: Self::allocate_buckets(DEFAULT_BUCKETS),
+                hash_builder,
+            }),
         }
     }
 
@@ -71,19 +77,30 @@ where
     #[inline]
     pub fn with_hasher_and_buckets(hash_builder: S, buckets: usize) -> Self {
         assert!(buckets > 0, "hash set needs at least one bucket");
-        Self { size: buckets, buckets: Self::allocate_buckets(buckets), hash_builder }
+        Self {
+            inner: Arc::new(RawHashSet {
+                size: buckets,
+                buckets: Self::allocate_buckets(buckets),
+                hash_builder,
+            }),
+        }
     }
 
     /// Returns the number of buckets in this hash set.
     #[inline]
     pub fn buckets(&self) -> usize {
-        self.size
+        self.inner.size
     }
 
     /// Returns a reference to the set's `BuildHasher`.
     #[inline]
     pub fn hasher(&self) -> &S {
-        &self.hash_builder
+        &self.inner.hash_builder
+    }
+
+    #[inline]
+    pub fn handle(&self) -> Handle<T, S> {
+        Handle { inner: Arc::clone(&self.inner), guards: Guards::new() }
     }
 
     /// Allocates a boxed slice of ordered sets.
@@ -100,7 +117,120 @@ where
             Box::from_raw(slice)
         }
     }
+}
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Handle
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub struct Handle<T, S = RandomState> {
+    inner: Arc<RawHashSet<T, S>>,
+    guards: Guards,
+}
+
+impl<T, S> Handle<T, S>
+where
+    T: Hash + Ord + 'static,
+    S: BuildHasher,
+{
+    /// Returns `true` if the set contains the given `value`.
+    #[inline]
+    pub fn contains<Q>(&mut self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Ord,
+    {
+        self.inner.contains(value, &mut self.guards)
+    }
+
+    /// Returns a reference to the value in the set, if any, that is equal to the given value.
+    ///
+    /// The value may be any borrowed form of the set's value type, but [`Hash`][Hash] and
+    /// [`Eq`][Eq] on the borrowed form *must* match those for the value type.
+    ///
+    /// [Hash]: std::hash::Hash
+    /// [Eq]: std::cmp::Eq
+    #[inline]
+    pub fn get<Q>(&mut self, value: &Q) -> Option<&T>
+    where
+        T: Borrow<Q>,
+        Q: Hash + Ord,
+    {
+        self.inner.get(value, &mut self.guards)
+    }
+
+    /// Adds a value to the set.
+    ///
+    /// If the set did not have this value present, `true` is returned.
+    /// If the set did have this value present, `false` is returned.
+    #[inline]
+    pub fn insert(&mut self, value: T) -> bool {
+        self.inner.insert(value, &mut self.guards)
+    }
+
+    /// Removes a value from the set. Returns whether the value was
+    /// present in the set.
+    ///
+    /// The value may be any borrowed form of the set's value type, but
+    /// [`Hash`][Hash] and [`Eq`][Eq] on the borrowed form *must* match those for
+    /// the value type.
+    ///
+    /// [Hash]: std::hash::Hash
+    /// [Eq]: std::cmp::Eq
+    #[inline]
+    pub fn remove<Q>(&mut self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Ord + Hash,
+    {
+        self.inner.remove(value, &mut self.guards)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Guards
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// A container for the three hazard pointers required to safely traverse a hash
+/// set.
+#[derive(Debug, Default)]
+struct Guards {
+    prev: Guard,
+    curr: Guard,
+    next: Guard,
+}
+
+impl Guards {
+    #[inline]
+    fn new() -> Self {
+        Self { prev: Guard::new(), curr: Guard::new(), next: Guard::new() }
+    }
+
+    /// Releases all contained guards.
+    #[inline]
+    fn release_all(&mut self) {
+        self.prev.release();
+        self.curr.release();
+        self.next.release();
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RawHashSet
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// A concurrent hash set.
+struct RawHashSet<T, S = RandomState> {
+    size: usize,
+    buckets: Box<[OrderedSet<T>]>,
+    hash_builder: S,
+}
+
+impl<T, S> RawHashSet<T, S>
+where
+    T: Hash + Ord,
+    S: BuildHasher,
+{
     /// Generates a hash for `value` and transforms it into a slice index for the given number of
     /// buckets.
     #[inline]
@@ -115,21 +245,21 @@ where
     }
 }
 
-impl<T, S> HashSet<T, S>
+impl<T, S> RawHashSet<T, S>
 where
     T: Hash + Ord + 'static,
     S: BuildHasher,
 {
     /// Returns `true` if the set contains the given `value`.
     #[inline]
-    pub fn contains<Q>(&self, value: &Q) -> bool
+    pub fn contains<Q>(&self, value: &Q, guards: &mut Guards) -> bool
     where
         T: Borrow<Q>,
         Q: Hash + Ord,
     {
         let set = &self.buckets[Self::make_hash(&self.hash_builder, value, self.size)];
-        let res = set.get(value).is_some();
-        //guards.release_all();
+        let res = set.get(value, guards).is_some();
+        guards.release_all();
 
         res
     }
@@ -142,13 +272,13 @@ where
     /// [Hash]: std::hash::Hash
     /// [Eq]: std::cmp::Eq
     #[inline]
-    pub fn get<'g, Q>(&self, value: &Q) -> Option<&'g T>
+    pub fn get<'g, Q>(&self, value: &Q, guards: &'g mut Guards) -> Option<&'g T>
     where
         T: Borrow<Q>,
         Q: Hash + Ord,
     {
         let set = &self.buckets[Self::make_hash(&self.hash_builder, value, self.size)];
-        set.get(value)
+        set.get(value, guards)
     }
 
     /// Adds a value to the set.
@@ -156,9 +286,9 @@ where
     /// If the set did not have this value present, `true` is returned.
     /// If the set did have this value present, `false` is returned.
     #[inline]
-    pub fn insert(&self, value: T) -> bool {
+    pub fn insert(&self, value: T, guards: &mut Guards) -> bool {
         let set = &self.buckets[Self::make_hash(&self.hash_builder, &value, self.size)];
-        set.insert_node(value)
+        set.insert_node(value, guards)
     }
 
     /// Removes a value from the set. Returns whether the value was
@@ -171,13 +301,13 @@ where
     /// [Hash]: std::hash::Hash
     /// [Eq]: std::cmp::Eq
     #[inline]
-    pub fn remove<Q>(&self, value: &Q) -> bool
+    pub fn remove<Q>(&self, value: &Q, guards: &mut Guards) -> bool
     where
         T: Borrow<Q>,
         Q: Ord + Hash,
     {
         let set = &self.buckets[Self::make_hash(&self.hash_builder, value, self.size)];
-        set.remove_node(value)
+        set.remove_node(value, guards)
     }
 }
 
@@ -234,33 +364,34 @@ impl Ord for DropI8<'_> {
 
 fn test_insert_remove() {
     let set = HashSet::with_buckets(1);
+    let mut handle = set.handle();
 
     // insert
-    assert!(set.insert(0));
-    assert!(set.insert(1));
-    assert!(set.insert(-10));
-    assert!(set.insert(10));
-    assert!(set.insert(5));
-    assert!(set.insert(-5));
-    assert!(set.insert(7));
-    assert!(set.insert(-2));
+    assert!(handle.insert(0));
+    assert!(handle.insert(1));
+    assert!(handle.insert(-10));
+    assert!(handle.insert(10));
+    assert!(handle.insert(5));
+    assert!(handle.insert(-5));
+    assert!(handle.insert(7));
+    assert!(handle.insert(-2));
 
     // remove
-    assert!(set.remove(&-10));
-    assert!(set.remove(&-5));
-    assert!(set.remove(&-2));
-    assert!(set.remove(&0));
-    assert!(set.remove(&5));
-    assert!(set.remove(&7));
-    assert!(set.remove(&10));
+    assert!(handle.remove(&-10));
+    assert!(handle.remove(&-5));
+    assert!(handle.remove(&-2));
+    assert!(handle.remove(&0));
+    assert!(handle.remove(&5));
+    assert!(handle.remove(&7));
+    assert!(handle.remove(&10));
 
-    assert!(!set.contains(&-10));
-    assert!(!set.contains(&-5));
-    assert!(!set.contains(&-2));
-    assert!(!set.contains(&0));
-    assert!(!set.contains(&5));
-    assert!(!set.contains(&7));
-    assert!(!set.contains(&10));
+    assert!(!handle.contains(&-10));
+    assert!(!handle.contains(&-5));
+    assert!(!handle.contains(&-2));
+    assert!(!handle.contains(&0));
+    assert!(!handle.contains(&5));
+    assert!(!handle.contains(&7));
+    assert!(!handle.contains(&10));
 
     println!("test_insert_remove: success");
 }
@@ -269,15 +400,16 @@ fn test_random() {
     use rand::prelude::*;
 
     let set = HashSet::with_buckets(1);
+    let mut handle = set.handle();
 
     let mut conflicts = 0;
     for _ in 0..10_000 {
         let value: i8 = rand::thread_rng().gen();
-        if set.contains(&value) {
+        if handle.contains(&value) {
             conflicts += 1;
-            set.remove(&value);
+            handle.remove(&value);
         } else {
-            set.insert(value);
+            handle.insert(value);
         }
     }
 
@@ -285,8 +417,6 @@ fn test_random() {
 }
 
 fn main() {
-    use std::sync::Arc;
-
     use rand::prelude::*;
 
     const THREADS: usize = 8;
@@ -307,10 +437,11 @@ fn main() {
     test_random();
 
     // the single bucket ensures maximum contention
-    let set = Arc::new(HashSet::with_buckets(1));
+    let set = HashSet::with_buckets(1);
+
     let handles: Vec<_> = (0..THREADS)
         .map(|id| {
-            let set = Arc::clone(&set);
+            let mut handle = set.handle();
             thread::spawn(move || {
                 let mut alloc_count = 0u32;
 
@@ -320,10 +451,10 @@ fn main() {
                     }
 
                     let value: i8 = rand::thread_rng().gen();
-                    if set.contains(&value) {
-                        set.remove(&value);
+                    if handle.contains(&value) {
+                        handle.remove(&value);
                     } else {
-                        set.insert(DropI8(value, &THREAD_COUNTS[id]));
+                        handle.insert(DropI8(value, &THREAD_COUNTS[id]));
                         alloc_count += 1;
                     }
                 }
@@ -344,4 +475,3 @@ fn main() {
     );
     println!("success, no leaks detected.");
 }
-*/
