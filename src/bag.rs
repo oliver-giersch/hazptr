@@ -7,7 +7,7 @@
 //! fat pointers, so they do maintain dynamic type information, of which only
 //! the concrete `Drop` implementation is actually required.
 //! They are stored in `RetiredBag` structs and removed (i.e. dropped and
-//! deallocated) only when no thread has an active hazard pointer protecting the
+//! de-allocated) only when no thread has an active hazard pointer protecting the
 //! same memory address of the reclaimed record.
 //!
 //! # Abandoned Bags
@@ -25,12 +25,15 @@
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
+use core::cmp;
 use core::mem;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{
     AtomicPtr,
     Ordering::{Acquire, Relaxed, Release},
 };
+
+use crate::hazard::Protected;
 
 pub(crate) type Retired = reclaim::Retired<crate::HP>;
 
@@ -47,7 +50,7 @@ pub(crate) type Retired = reclaim::Retired<crate::HP>;
 /// many retired records are cached at any time.
 #[derive(Debug)]
 pub(crate) struct RetiredBag {
-    pub inner: Vec<Retired>,
+    pub inner: Vec<ReclaimOnDrop>,
     next: Option<NonNull<RetiredBag>>,
 }
 
@@ -61,20 +64,53 @@ impl RetiredBag {
     }
 
     /// Merges `self` with the given other `Vec`, which is then dropped
-    /// (deallocated).
+    /// (de-allocated).
     ///
     /// If the `other` bag has substantially higher (free) capacity than `self`,
     /// both vectors are swapped before merging.
     /// By keeping the larger vector in this case and dropping the smaller one,
-    /// instead, it could be possible to avoid/defer future reallocations, when
+    /// instead, it could be possible to avoid/defer future re-allocations, when
     /// more records are retired.
     #[inline]
-    pub fn merge(&mut self, mut other: Vec<Retired>) {
+    pub fn merge(&mut self, mut other: Vec<ReclaimOnDrop>) {
         if (other.capacity() - other.len()) > self.inner.capacity() {
             mem::swap(&mut self.inner, &mut other);
         }
 
         self.inner.append(&mut other);
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// ReclaimOnDrop
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Debug)]
+pub(crate) struct ReclaimOnDrop(Retired);
+
+impl ReclaimOnDrop {
+    /// Compares the address of `protected` with the address of `self`.
+    ///
+    /// This is used for binary search, so the argument order may matter!
+    #[inline]
+    pub fn compare_with(&self, protected: &Protected) -> cmp::Ordering {
+        protected.address().cmp(&self.0.address())
+    }
+}
+
+impl From<Retired> for ReclaimOnDrop {
+    #[inline]
+    fn from(retired: Retired) -> Self {
+        Self(retired)
+    }
+}
+
+impl Drop for ReclaimOnDrop {
+    #[inline]
+    fn drop(&mut self) {
+        // this is safe because it is guaranteed that even in case of a panic, retired records are
+        // only ever dropped during the course of `LocalInner::scan_hazards`.
+        unsafe { self.0.reclaim() };
     }
 }
 

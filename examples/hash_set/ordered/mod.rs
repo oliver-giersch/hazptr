@@ -3,9 +3,9 @@ use std::cmp::Ordering::{Equal, Greater};
 use std::mem;
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 
-use hazptr::reclaim::align::CacheAligned;
-use hazptr::reclaim::prelude::*;
 use hazptr::typenum;
+use reclaim::align::CacheAligned;
+use reclaim::prelude::*;
 use typenum::U1;
 
 use crate::Guards;
@@ -73,7 +73,7 @@ where
                     }
 
                     // (ORD:3) this `Release` CAS synchronizes-with the `Acquire` CAS (ORD:2) and
-                    // the `Acquire` loads (ORD:4) and ORD:5)
+                    // the `Acquire` loads (ORD:4) and (ORD:5)
                     match prev.compare_exchange(curr, next, Release, Relaxed) {
                         Ok(unlinked) => unsafe { unlinked.retire() },
                         Err(_) => {
@@ -107,6 +107,7 @@ where
     // this function uses unsafe code internally, but the interface is safe:
     // the three guards are each advanced in turn and are guaranteed to eventually protect all of
     // the returned references.
+    // FIXME: Try some refactoring when NLL+ are there?
     fn find<'set, 'g, Q>(&'set self, value: &Q, guards: &'g mut Guards) -> FindResult<'set, 'g, T>
     where
         T: Borrow<Q>,
@@ -114,8 +115,8 @@ where
         'g: 'set,
     {
         'retry: loop {
-            // prev is protected by guards.prev except in the first iteration
-            let mut prev: &'g Atomic<Node<T>> = unsafe { &*(&self.head as *const _) };
+            // prev is still protected by guards.prev (except in the first iteration where prev == head)
+            let mut prev = &self.head;
             // (ORD:4) this `Acquire` load synchronizes-with the `Release` CAS (ORD:1), (ORD:3) and
             // (ORD:6)
             // prev is protected by guards.curr and the node holding prev by guards.prev
@@ -182,9 +183,7 @@ unsafe fn found_result<'a, 'set: 'a, 'g: 'set, T: 'static>(
     curr: Shared<'a, Node<T>>,
     next: Marked<Shared<'a, Node<T>>>,
 ) -> FindResult<'set, 'g, T> {
-    let curr = Shared::from_marked_ptr(curr.into_marked_ptr());
-    let next = Marked::from_marked_ptr(next.into_marked_ptr());
-    Found { prev, curr, next }
+    Found { prev, curr: mem::transmute(curr), next: mem::transmute(next) }
 }
 
 #[inline]
@@ -192,8 +191,7 @@ unsafe fn insert_result<'a, 'set: 'a, 'g: 'set, T: 'static>(
     prev: &'set Atomic<Node<T>>,
     curr: Shared<'a, Node<T>>,
 ) -> FindResult<'set, 'g, T> {
-    let next = Some(Shared::from_marked_ptr(curr.into_marked_ptr()));
-    Insert { prev, next }
+    Insert { prev, next: Some(mem::transmute(curr)) }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

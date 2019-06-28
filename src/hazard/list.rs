@@ -66,11 +66,11 @@ use core::sync::atomic::{
 use reclaim::align::CacheAligned;
 use reclaim::leak::Owned;
 
-type Atomic<T> = reclaim::leak::Atomic<T, reclaim::typenum::U0>;
-type Shared<'g, T> = reclaim::leak::Shared<'g, T, reclaim::typenum::U0>;
-
 use crate::hazard::{Hazard, FREE, THREAD_RESERVED};
 use crate::sanitize::{RELEASE_FAIL, RELEASE_SUCCESS};
+
+type Atomic<T> = reclaim::leak::Atomic<T, reclaim::typenum::U0>;
+type Shared<'g, T> = reclaim::leak::Shared<'g, T, reclaim::typenum::U0>;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HazardList

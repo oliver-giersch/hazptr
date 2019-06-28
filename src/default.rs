@@ -3,11 +3,11 @@ use std::ptr::NonNull;
 use reclaim::typenum::Unsigned;
 use reclaim::{GlobalReclaim, Reclaim};
 
-pub type Guard = crate::guarded::Guard<DefaultAccess>;
-
 use crate::hazard::Hazard;
 use crate::local::{Local, LocalAccess, RecycleError};
 use crate::{Unlinked, HP};
+
+pub type Guard = crate::guarded::Guard<DefaultAccess>;
 
 // Per-thread instances of `Local`
 thread_local!(static LOCAL: Local = Local::new());

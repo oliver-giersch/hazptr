@@ -11,11 +11,14 @@ use core::cell::UnsafeCell;
 use core::fmt;
 use core::mem::ManuallyDrop;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{self, Ordering::Release};
+use core::sync::atomic::{
+    self,
+    Ordering::{Release, SeqCst},
+};
 
 use arrayvec::{ArrayVec, CapacityError};
 
-use crate::bag::{Retired, RetiredBag};
+use crate::bag::{ReclaimOnDrop, Retired, RetiredBag};
 use crate::global;
 use crate::hazard::{Hazard, Protected};
 use crate::sanitize;
@@ -103,7 +106,7 @@ impl Local {
     #[inline]
     pub(crate) fn retire_record(&self, record: Retired) {
         let local = unsafe { &mut *self.0.get() };
-        local.retired_bag.inner.push(record);
+        local.retired_bag.inner.push(ReclaimOnDrop::from(record));
         #[cfg(not(feature = "count-release"))]
         local.increase_ops_count();
     }
@@ -131,7 +134,7 @@ impl<'a> LocalAccess for &'a Local {
     fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleError> {
         unsafe { &mut *self.0.get() }.hazard_cache.try_push(hazard)?;
 
-        // (LOC:2) this `Release` store synchronizes-with any `Acquire` load on the
+        // (LOC:1) this `Release` store synchronizes-with any `Acquire` load on the
         // `protected` field of the same hazard pointer
         hazard.set_thread_reserved(Release);
         Ok(())
@@ -184,40 +187,32 @@ impl LocalInner {
             return 0;
         }
 
-        global::GLOBAL.collect_protected_hazards(&mut self.scan_cache);
+        // (LOC:2) this `SeqCst` fence synchronizes-with the `SeqCst` stores ... and the `SeqCst`
+        // CAS (LIS:3P).
+        // This enforces a total order between all these operations, which is required in order to
+        // ensure that all stores PROTECTING pointers are fully visible BEFORE the hazard pointers
+        // are scanned and unprotected retired records are reclaimed.
+
+        // (GLO:1) this `SeqCst` fence synchronizes-with the `SeqCst` stores (LOC:1), (GUA:2),
+        // (GUA:4) and the `SeqCst` CAS (LIS:3P). This establishes total order between all these
+        // operations, which is required here in order to ensure that all stores protecting pointers
+        // have become fully visible when the hazard pointers are scanned and retired records are
+        // reclaimed.
+        global::GLOBAL.collect_protected_hazards(&mut self.scan_cache, SeqCst);
 
         self.scan_cache.sort_unstable();
-        self.reclaim_unprotected_records();
+        unsafe { self.reclaim_unprotected_records() };
 
         len - self.retired_bag.inner.len()
     }
 
-    #[cfg(not(feature = "nightly"))]
-    fn reclaim_unprotected_records(&mut self) {
-        for mut retired in self.retired_bag.inner.split_off(0) {
-            match self
-                .scan_cache
-                .binary_search_by(|protected| protected.address().cmp(&retired.address()))
-            {
-                Ok(_) => self.retired_bag.inner.push(retired),
-                Err(_) => unsafe { retired.reclaim() },
-            };
-        }
-    }
-
-    #[cfg(feature = "nightly")]
-    fn reclaim_unprotected_records(&mut self) {
+    // this is declared unsafe because in this function the retired records are actually dropped.
+    #[allow(unused_unsafe)]
+    unsafe fn reclaim_unprotected_records(&mut self) {
         let scan_cache = &self.scan_cache;
-        self.retired_bag.inner.drain_filter(|retired| {
-            match scan_cache
-                .binary_search_by(|protected| protected.address().cmp(&retired.address()))
-            {
-                Ok(_) => false,
-                Err(_) => {
-                    unsafe { retired.reclaim() };
-                    true
-                }
-            }
+        self.retired_bag.inner.retain(|retired| {
+            // retain (DON'T drop) all records found within the scan cache of protected hazards
+            scan_cache.binary_search_by(|protected| retired.compare_with(protected)).is_ok()
         });
     }
 }
@@ -229,7 +224,7 @@ impl Drop for LocalInner {
             hazard.set_free(sanitize::RELAXED_STORE);
         }
 
-        // (LOC:3) this `Release` fence synchronizes-with the `SeqCst` fence (GLO:1)
+        // (LOC:3) this `Release` fence synchronizes-with ...
         atomic::fence(Release);
 
         let _ = self.scan_hazards();

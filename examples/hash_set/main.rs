@@ -11,7 +11,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 
-use hazptr::reclaim;
 use hazptr::Guard;
 use reclaim::prelude::*;
 
@@ -98,6 +97,7 @@ where
         &self.inner.hash_builder
     }
 
+    /// Returns a new handle to the [`HashSet`].
     #[inline]
     pub fn handle(&self) -> Handle<T, S> {
         Handle { inner: Arc::clone(&self.inner), guards: Guards::new() }
@@ -134,6 +134,9 @@ where
     S: BuildHasher,
 {
     /// Returns `true` if the set contains the given `value`.
+    /// 
+    /// This method requires a mutable `self` reference, because the internally use hazard pointers
+    /// must be adapted during iteration of the set.
     #[inline]
     pub fn contains<Q>(&mut self, value: &Q) -> bool
     where
@@ -147,6 +150,11 @@ where
     ///
     /// The value may be any borrowed form of the set's value type, but [`Hash`][Hash] and
     /// [`Eq`][Eq] on the borrowed form *must* match those for the value type.
+    /// 
+    /// This method requires a mutable `self` reference, because the internally use hazard pointers
+    /// must be adapted during iteration of the set.
+    /// The returned reference is likewise protected by one of these hazard pointers, so it can not
+    /// be used after calling another method that mutates these.
     ///
     /// [Hash]: std::hash::Hash
     /// [Eq]: std::cmp::Eq
@@ -201,6 +209,7 @@ struct Guards {
 }
 
 impl Guards {
+    /// Creates a new set of [`Guards`].
     #[inline]
     fn new() -> Self {
         Self { prev: Guard::new(), curr: Guard::new(), next: Guard::new() }
@@ -224,25 +233,6 @@ struct RawHashSet<T, S = RandomState> {
     size: usize,
     buckets: Box<[OrderedSet<T>]>,
     hash_builder: S,
-}
-
-impl<T, S> RawHashSet<T, S>
-where
-    T: Hash + Ord,
-    S: BuildHasher,
-{
-    /// Generates a hash for `value` and transforms it into a slice index for the given number of
-    /// buckets.
-    #[inline]
-    fn make_hash<Q>(builder: &S, value: &Q, buckets: usize) -> usize
-    where
-        T: Borrow<Q>,
-        Q: Hash + Ord,
-    {
-        let mut state = builder.build_hasher();
-        value.hash(&mut state);
-        (state.finish() % buckets as u64) as usize
-    }
 }
 
 impl<T, S> RawHashSet<T, S>
@@ -308,6 +298,25 @@ where
     {
         let set = &self.buckets[Self::make_hash(&self.hash_builder, value, self.size)];
         set.remove_node(value, guards)
+    }
+}
+
+impl<T, S> RawHashSet<T, S>
+    where
+        T: Hash + Ord,
+        S: BuildHasher,
+{
+    /// Generates a hash for `value` and transforms it into a slice index for the given number of
+    /// buckets.
+    #[inline]
+    fn make_hash<Q>(builder: &S, value: &Q, buckets: usize) -> usize
+        where
+            T: Borrow<Q>,
+            Q: Hash + Ord,
+    {
+        let mut state = builder.build_hasher();
+        value.hash(&mut state);
+        (state.finish() % buckets as u64) as usize
     }
 }
 
