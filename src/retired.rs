@@ -93,7 +93,7 @@ impl ReclaimOnDrop {
     ///
     /// This is used for binary search, so the argument order may matter!
     #[inline]
-    pub fn compare_with(&self, protected: &Protected) -> cmp::Ordering {
+    pub fn compare_with(&self, protected: Protected) -> cmp::Ordering {
         protected.address().cmp(&self.0.address())
     }
 }
@@ -178,7 +178,7 @@ mod tests {
     use std::ptr::NonNull;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use super::{AbandonedBags, Retired, RetiredBag};
+    use super::{AbandonedBags, ReclaimOnDrop, Retired, RetiredBag};
 
     struct DropCount<'a>(&'a AtomicUsize);
     impl Drop for DropCount<'_> {
@@ -197,25 +197,25 @@ mod tests {
         let rec2 = NonNull::from(Box::leak(Box::new(2.2)));
         let rec3 = NonNull::from(Box::leak(Box::new(String::from("String"))));
 
-        bag1.inner.push(unsafe { Retired::new_unchecked(rec1) });
-        bag1.inner.push(unsafe { Retired::new_unchecked(rec2) });
-        bag1.inner.push(unsafe { Retired::new_unchecked(rec3) });
+        bag1.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec1) }));
+        bag1.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec2) }));
+        bag1.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec3) }));
 
         let mut bag2 = Box::new(RetiredBag::new());
 
         let rec4 = NonNull::from(Box::leak(Box::new(vec![1, 2, 3, 4])));
         let rec5 = NonNull::from(Box::leak(Box::new("slice")));
 
-        bag2.inner.push(unsafe { Retired::new_unchecked(rec4) });
-        bag2.inner.push(unsafe { Retired::new_unchecked(rec5) });
+        bag2.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec4) }));
+        bag2.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec5) }));
 
         let mut bag3 = Box::new(RetiredBag::new());
 
         let rec6 = NonNull::from(Box::leak(Box::new(DropCount(&count))));
         let rec7 = NonNull::from(Box::leak(Box::new(DropCount(&count))));
 
-        bag3.inner.push(unsafe { Retired::new_unchecked(rec6) });
-        bag3.inner.push(unsafe { Retired::new_unchecked(rec7) });
+        bag3.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec6) }));
+        bag3.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec7) }));
 
         let abandoned = AbandonedBags::new();
         abandoned.push(bag1);

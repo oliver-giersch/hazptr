@@ -119,7 +119,8 @@ impl HazardList {
 
         while let Some(node) = curr.map(Shared::into_ref) {
             if node.hazard().protected.load(Relaxed) == FREE {
-                // (LIS:3P) this `Release` CAS synchronizes-with ...
+                // (LIS:3P) this `SeqCst`/`Release` CAS synchronizes-with the `SeqCst` fence (LOC:2)
+                // and enforces a total order in case BOTH are `SeqCst`
                 let prev = node.hazard.protected.compare_and_swap(FREE, ptr, order);
 
                 if prev == FREE {

@@ -37,7 +37,8 @@ impl<L: LocalAccess> Clone for Guard<L> {
 // a small shorthand for a one-line return statement
 macro_rules! release {
     ($self:ident, $tag:expr) => {{
-        // (GUA:1) this `Release` store synchronizes-with ...
+        // (GUA:1) this `Release` store synchronizes-with the `SeqCst` fence (LOC:2) but WITHOUT
+        // enforcing a total order
         $self.hazard.set_thread_reserved(Release);
         Null($tag)
     }};
@@ -48,7 +49,8 @@ unsafe impl<L: LocalAccess> Protect for Guard<L> {
 
     #[inline]
     fn release(&mut self) {
-        // (GUA:2) this `Release` store synchronizes-with ...
+        // (GUA:2) this `Release` store synchronizes-with the `SeqCst` fence (LOC:2) but WITHOUT
+        // enforcing a total order
         self.hazard.set_thread_reserved(Release);
     }
 
@@ -62,8 +64,7 @@ unsafe impl<L: LocalAccess> Protect for Guard<L> {
             Null(tag) => return release!(self, tag),
             Value(ptr) => {
                 let mut protect = ptr.decompose_non_null();
-                // (GUA:2 this `SeqCst` store synchronizes-with the `SeqCst` fence (LOC:2) and the
-                // `SeqCst` CAS (LIS:3P).
+                // (GUA:3) this `SeqCst` store synchronizes-with the `SeqCst` fence (LOC:2)
                 self.hazard.set_protected(protect.cast(), SeqCst);
 
                 loop {
@@ -75,8 +76,8 @@ unsafe impl<L: LocalAccess> Protect for Guard<L> {
                                 return Value(unsafe { Shared::from_marked_non_null(ptr) });
                             }
 
-                            // (GUA:3) this `SeqCst` store synchronizes-with the `SeqCst` fence
-                            // (LOC:2) and the SeqCst` CAS (LIS:3P).
+                            // (GUA:4) this `SeqCst` store synchronizes-with the `SeqCst` fence
+                            // (LOC:2)
                             self.hazard.set_protected(unmarked.cast(), SeqCst);
                             protect = unmarked;
                         }
@@ -102,12 +103,12 @@ unsafe impl<L: LocalAccess> Protect for Guard<L> {
             Null(tag) => Ok(release!(self, tag)),
             Value(ptr) => {
                 let unmarked = ptr.decompose_non_null();
-                // (GUA:4) this `SeqCst` store synchronizes-with the `SeqCst` fence (LOC:2) and the
-                // `SeqCst` CAS (LIS:3P).
+                // (GUA:5) this `SeqCst` store synchronizes-with the `SeqCst` fence (LOC:2)
                 self.hazard.set_protected(unmarked.cast(), SeqCst);
 
                 if atomic.load_raw(order) != ptr {
-                    // (GUA:5) this `Release` store synchronizes-with ...
+                    // (GUA:6) this `Release` store synchronizes-with the `SeqCst` fence (LOC:2) but
+                    // WITHOUT enforcing a total order
                     self.hazard.set_thread_reserved(Release);
                     Err(NotEqualError)
                 } else {

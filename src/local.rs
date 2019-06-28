@@ -18,9 +18,9 @@ use core::sync::atomic::{
 
 use arrayvec::{ArrayVec, CapacityError};
 
-use crate::bag::{ReclaimOnDrop, Retired, RetiredBag};
-use crate::global;
+use crate::global::GLOBAL;
 use crate::hazard::{Hazard, Protected};
+use crate::retired::{ReclaimOnDrop, Retired, RetiredBag};
 use crate::sanitize;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -90,7 +90,7 @@ impl Local {
             ops_count: 0,
             hazard_cache: ArrayVec::new(),
             scan_cache: Vec::with_capacity(SCAN_CACHE),
-            retired_bag: match global::GLOBAL.try_adopt_abandoned_records() {
+            retired_bag: match GLOBAL.try_adopt_abandoned_records() {
                 Some(boxed) => ManuallyDrop::new(boxed),
                 None => ManuallyDrop::new(Box::new(RetiredBag::new())),
             },
@@ -120,7 +120,7 @@ impl<'a> LocalAccess for &'a Local {
         let local = unsafe { &mut *self.0.get() };
         match local.hazard_cache.pop() {
             Some(hazard) => hazard,
-            None => global::GLOBAL.get_hazard(protect),
+            None => GLOBAL.get_hazard(protect),
         }
     }
 
@@ -134,8 +134,8 @@ impl<'a> LocalAccess for &'a Local {
     fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleError> {
         unsafe { &mut *self.0.get() }.hazard_cache.try_push(hazard)?;
 
-        // (LOC:1) this `Release` store synchronizes-with any `Acquire` load on the
-        // `protected` field of the same hazard pointer
+        // (LOC:1) this `Release` store synchronizes-with the `SeqCst` fence (LOC:2) but WITHOUT
+        // enforcing a total order
         hazard.set_thread_reserved(Release);
         Ok(())
     }
@@ -169,7 +169,7 @@ impl LocalInner {
 
         if self.ops_count == SCAN_THRESHOLD {
             // try to adopt and merge any (global) abandoned retired bags
-            if let Some(abandoned_bag) = global::GLOBAL.try_adopt_abandoned_records() {
+            if let Some(abandoned_bag) = GLOBAL.try_adopt_abandoned_records() {
                 self.retired_bag.merge(abandoned_bag.inner);
             }
 
@@ -187,18 +187,12 @@ impl LocalInner {
             return 0;
         }
 
-        // (LOC:2) this `SeqCst` fence synchronizes-with the `SeqCst` stores ... and the `SeqCst`
-        // CAS (LIS:3P).
+        // (LOC:2) this `SeqCst` fence synchronizes-with the `SeqCst` stores (GUA:3), (GUA:4),
+        // (GUA:5) and the `SeqCst` CAS (LIS:3P).
         // This enforces a total order between all these operations, which is required in order to
         // ensure that all stores PROTECTING pointers are fully visible BEFORE the hazard pointers
         // are scanned and unprotected retired records are reclaimed.
-
-        // (GLO:1) this `SeqCst` fence synchronizes-with the `SeqCst` stores (LOC:1), (GUA:2),
-        // (GUA:4) and the `SeqCst` CAS (LIS:3P). This establishes total order between all these
-        // operations, which is required here in order to ensure that all stores protecting pointers
-        // have become fully visible when the hazard pointers are scanned and retired records are
-        // reclaimed.
-        global::GLOBAL.collect_protected_hazards(&mut self.scan_cache, SeqCst);
+        GLOBAL.collect_protected_hazards(&mut self.scan_cache, SeqCst);
 
         self.scan_cache.sort_unstable();
         unsafe { self.reclaim_unprotected_records() };
@@ -212,7 +206,7 @@ impl LocalInner {
         let scan_cache = &self.scan_cache;
         self.retired_bag.inner.retain(|retired| {
             // retain (DON'T drop) all records found within the scan cache of protected hazards
-            scan_cache.binary_search_by(|protected| retired.compare_with(protected)).is_ok()
+            scan_cache.binary_search_by(|&protected| retired.compare_with(protected)).is_ok()
         });
     }
 }
@@ -224,15 +218,16 @@ impl Drop for LocalInner {
             hazard.set_free(sanitize::RELAXED_STORE);
         }
 
-        // (LOC:3) this `Release` fence synchronizes-with ...
+        // (LOC:3) this `Release` fence synchronizes-with the `SeqCst` fence (LOC:2) but WITHOUT
+        // enforcing a total order
         atomic::fence(Release);
 
         let _ = self.scan_hazards();
-        // this is safe because the `retired_bag` field is neither accessed afterwards nor dropped
+        // this is safe because the field is neither accessed afterwards nor dropped
         let bag = unsafe { ptr::read(&*self.retired_bag) };
 
         if !bag.inner.is_empty() {
-            global::GLOBAL.abandon_retired_bag(bag);
+            GLOBAL.abandon_retired_bag(bag);
         }
     }
 }
@@ -278,7 +273,7 @@ mod tests {
     use std::ptr::NonNull;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use crate::bag::Retired;
+    use crate::retired::Retired;
 
     use super::{Local, LocalAccess, HAZARD_CACHE, SCAN_CACHE, SCAN_THRESHOLD};
 

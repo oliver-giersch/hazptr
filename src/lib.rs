@@ -141,11 +141,11 @@ pub type Unprotected<T, N> = reclaim::Unprotected<T, HP, N>;
 #[cfg(feature = "std")]
 mod default;
 
-mod bag;
 mod global;
 mod guarded;
 mod hazard;
 mod local;
+mod retired;
 
 cfg_if! {
     if #[cfg(feature = "std")] {
@@ -159,7 +159,7 @@ cfg_if! {
     }
 }
 
-use crate::bag::Retired;
+use crate::retired::Retired;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HP
@@ -171,8 +171,7 @@ pub struct HP;
 
 unsafe impl Reclaim for HP {
     type Local = crate::local::Local;
-    // hazard pointers do not require any extra information per each allocated record
-    type RecordHeader = ();
+    type RecordHeader = (); // no extra information per allocated record is required
 
     #[inline]
     unsafe fn retire_local<T: 'static, N: Unsigned>(local: &Self::Local, unlinked: Unlinked<T, N>) {
@@ -189,9 +188,9 @@ unsafe impl Reclaim for HP {
     }
 }
 
-// TSAN can not correctly asses ordering restraints from explicit fences, so
-// memory operations around such fences need stricter ordering than `Relaxed`,
-// when it is used.
+// The ThreadSanitizer can not correctly asses ordering restraints from explicit fences, so memory
+// operations around such fences need stricter ordering than `Relaxed`, when instrumentation is
+// chosen.
 
 #[cfg(not(feature = "sanitize-threads"))]
 mod sanitize {

@@ -10,8 +10,8 @@ use core::sync::atomic::{
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
-use crate::bag::{AbandonedBags, RetiredBag};
 use crate::hazard::{Hazard, HazardList, Protected};
+use crate::retired::{AbandonedBags, RetiredBag};
 use crate::sanitize;
 
 /// The single static `Global` instance
