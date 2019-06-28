@@ -55,9 +55,9 @@
 //!
 //! # Compare-and-Swap
 //!
-//! The atomic [`compare_exchange`][reclaim::Atomic::compare_exchange] method of the
-//! [`Atomic`] type is highly versatile and uses generics and (internal) traits
-//! in order to achieve some degree of argument *overloading*.
+//! The atomic [`compare_exchange`][reclaim::Atomic::compare_exchange] method of
+//! the [`Atomic`] type is highly versatile and uses generics and (internal)
+//! traits in order to achieve some degree of argument *overloading*.
 //! The `current` and `new` arguments accept a wide variety of pointer types,
 //! interchangeably.
 //!
@@ -171,7 +171,7 @@ pub struct HP;
 
 unsafe impl Reclaim for HP {
     type Local = crate::local::Local;
-    type RecordHeader = (); // no extra information per allocated record is required
+    type RecordHeader = (); // no extra header per allocated record is required
 
     #[inline]
     unsafe fn retire_local<T: 'static, N: Unsigned>(local: &Self::Local, unlinked: Unlinked<T, N>) {
@@ -188,9 +188,9 @@ unsafe impl Reclaim for HP {
     }
 }
 
-// The ThreadSanitizer can not correctly asses ordering restraints from explicit fences, so memory
-// operations around such fences need stricter ordering than `Relaxed`, when instrumentation is
-// chosen.
+// The ThreadSanitizer can not correctly asses ordering restraints from explicit
+// fences, so memory operations around such fences need stricter ordering than
+// `Relaxed`, when instrumentation is chosen.
 
 #[cfg(not(feature = "sanitize-threads"))]
 mod sanitize {

@@ -1,3 +1,7 @@
+//! An implementation of Treiber's stack with hazard pointers.
+//!
+//! There is a total of three lines of unsafe code.
+
 use std::mem::ManuallyDrop;
 use std::ptr;
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};

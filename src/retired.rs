@@ -108,8 +108,9 @@ impl From<Retired> for ReclaimOnDrop {
 impl Drop for ReclaimOnDrop {
     #[inline]
     fn drop(&mut self) {
-        // this is safe because it is guaranteed that even in case of a panic, retired records are
-        // only ever dropped during the course of `LocalInner::scan_hazards`.
+        // this is safe because it is guaranteed that even in case of a panic,
+        // retired records are only ever dropped during the course of
+        // `LocalInner::scan_hazards`.
         unsafe { self.0.reclaim() };
     }
 }
