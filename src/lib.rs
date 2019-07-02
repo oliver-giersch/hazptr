@@ -109,7 +109,6 @@
 //! [reclaim]: https://github.com/oliver-giersch/reclaim
 
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
-#![cfg_attr(feature = "nightly", feature(drain_filter))]
 #![warn(missing_docs)]
 
 #[cfg(not(feature = "std"))]
@@ -138,7 +137,7 @@ pub type Unlinked<T, N> = reclaim::Unlinked<T, HP, N>;
 /// reclamation scheme.
 pub type Unprotected<T, N> = reclaim::Unprotected<T, HP, N>;
 
-#[cfg(feature = "std")]
+#[cfg(any(test, feature = "std"))]
 mod default;
 
 mod global;
@@ -152,7 +151,7 @@ cfg_if! {
         /// A guarded pointer that can be used to acquire hazard pointers.
         pub type Guard = crate::default::Guard;
     } else {
-        pub use crate::local::{Local, RecycleErr};
+        pub use crate::local::{Local, RecycleError};
         /// A **thread local** guarded pointer that can be used to acquire
         /// hazard pointers.
         pub type LocalGuard<'a> = crate::guarded::Guard<&'a Local>;

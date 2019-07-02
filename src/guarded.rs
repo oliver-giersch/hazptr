@@ -34,7 +34,7 @@ impl<L: LocalAccess> Clone for Guard<L> {
     }
 }
 
-// a small shorthand for a one-line return statement
+// a small shorthand for a two-line return statement
 macro_rules! release {
     ($self:ident, $tag:expr) => {{
         // (GUA:1) this `Release` store synchronizes-with the `SeqCst` fence (LOC:2) but WITHOUT

@@ -52,7 +52,7 @@
 //! reclamation the worst-case outcome is a record not being reclaimed that
 //! would actually be a valid candidate for reclamation.
 
-#[cfg(not(feature = "std"))]
+#[cfg(not(any(test, feature = "std")))]
 use alloc::boxed::Box;
 
 use core::iter::FusedIterator;
