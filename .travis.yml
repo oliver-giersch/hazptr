@@ -2,7 +2,7 @@ language: rust
 cache: cargo
 
 rust:
-  - 1.26.0
+  - 1.28.0
   - stable
   - beta
   - nightly
@@ -10,7 +10,7 @@ rust:
 script:
   - cargo build --verbose
   - cargo test --verbose
-  - cargo test --test integration --features  "count-release maximum-reclamation-freq"
+  - env HAZPTR_SCAN_FREQ=1 cargo test --test integration --features  "count-release"
 # - cargo build --no-default-features --verbose
 # - cargo test --no-default-features --verbose
 

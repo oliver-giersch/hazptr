@@ -27,15 +27,14 @@ use crate::sanitize;
 // constants
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[cfg(all(not(feature = "maximum-reclamation-freq"), not(feature = "reduced-reclamation-freq")))]
-const SCAN_THRESHOLD: u32 = 100;
-#[cfg(feature = "reduced-reclamation-freq")]
-const SCAN_THRESHOLD: u32 = 200;
-#[cfg(feature = "maximum-reclamation-freq")]
-const SCAN_THRESHOLD: u32 = 1;
-
 const HAZARD_CACHE: usize = 16;
 const SCAN_CACHE: usize = 128;
+
+include!(concat!(env!("OUT_DIR"), "/build_constants.rs"));
+
+const fn scan_threshold() -> u32 {
+    SCAN_THRESHOLD
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // LocalAccess (trait)
@@ -167,7 +166,7 @@ impl LocalInner {
     fn increase_ops_count(&mut self) {
         self.ops_count += 1;
 
-        if self.ops_count == SCAN_THRESHOLD {
+        if self.ops_count == scan_threshold() {
             // try to adopt and merge any (global) abandoned retired bags
             if let Some(abandoned_bag) = GLOBAL.try_adopt_abandoned_records() {
                 self.retired_bag.merge(abandoned_bag.inner);
@@ -275,7 +274,7 @@ mod tests {
 
     use crate::retired::Retired;
 
-    use super::{Local, LocalAccess, HAZARD_CACHE, SCAN_CACHE, SCAN_THRESHOLD};
+    use super::{scan_threshold, Local, LocalAccess, HAZARD_CACHE, SCAN_CACHE};
 
     struct DropCount<'a>(&'a AtomicUsize);
     impl Drop for DropCount<'_> {
@@ -327,7 +326,7 @@ mod tests {
     #[test]
     #[cfg_attr(feature = "count-release", ignore)]
     fn retire() {
-        const THRESHOLD: usize = SCAN_THRESHOLD as usize;
+        const THRESHOLD: usize = scan_threshold() as usize;
 
         let count = AtomicUsize::new(0);
         let local = Local::new();
@@ -364,7 +363,7 @@ mod tests {
     #[test]
     #[cfg_attr(feature = "max-reclamation-freq", ignore)]
     fn drop() {
-        const BELOW_THRESHOLD: usize = SCAN_THRESHOLD as usize / 2;
+        const BELOW_THRESHOLD: usize = scan_threshold() as usize / 2;
 
         let count = AtomicUsize::new(0);
         let local = Local::new();

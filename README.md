@@ -8,7 +8,7 @@ https://travis-ci.com/oliver-giersch/hazptr)
 [![Documentation](https://docs.rs/hazptr/badge.svg)](https://docs.rs/hazptr)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](
 https://github.com/oliver-giersch/hazptr)
-[![Rust 1.36+](https://img.shields.io/badge/rust-1.36+-lightgray.svg)](
+[![Rust 1.36+](https://img.shields.io/badge/rust-1.28+-lightgray.svg)](
 https://www.rust-lang.org)
 
 Whenever a thread reads a value from shared memory it also protects the loaded
@@ -29,7 +29,9 @@ hazptr = "0.1"
 
 ## Minimum Supported Rust Version (MSRV)
 
-The minimum supported rust version for this crate is 1.36.0
+The minimum supported rust version for this crate is 1.28.0.
+
+In case the (default) `std` feature is not used, the MSRV is 1.36.0.
 
 ## Comparison with [crossbeam-epoch](https://crates.io/crates/crossbeam-epoch)
 
@@ -60,46 +62,49 @@ implementation of a concurrent hash set.
 
 The following features are defined for this crate:
 
+- `std` (default)
 - `count-release`
-- `maximum-reclamation-freq`
-- `reduced-reclamation-freq`
-- `nightly`
 
 By default, a thread initiates a GC scan and attempts to flush its cache of
 retired records, once it has retired a certain threshold count of records.
 By compiling the crate with the `count-release` feature, this can be changed to
-count the instances of successfully acquired hazard pointers (`Guarded`) going
+count the instances of successfully acquired hazard pointers `Guard`s going
 out of scope (i.e. being released) instead.
-This can be beneficial when only few records are involved overall and retiring
-of records is rare.
+This can be beneficial, e.g. when there are only few records overall and
+their retirement is rare.
 
-The `maximum-reclamation-freq` and `reduced-reclamation-freq` features are
-**mutually exclusive** and affect the threshold that controls how often GC
-scans are started.
-With maximum reclamation frequency, a GC scan is initiated after **every**
-operation counting towards the threshold, i.e either retiring records or
-releasing acquired hazard pointers (depending on the selected feature).
-The reduced setting leads to less frequent scans compared to the default setting
-when no feature is selected.
+### Scan Frequency
 
-Generally, a lower reclamation frequency is better performance-wise, but could
-lead to the accumulation of large amounts of retired but unreclaimed records
-(i.e. garbage).
+The threshold value used for determining the frequency of GC scans can be
+customized through the `HAZPTR_SCAN_FREQ` environment variable.
+This variable can be any positive non-zero 32-bit integer value and is 100 by
+default, i.e. when not passing the env var during the build process.
+A scan frequency of 1 means, for example, that a GC scan is initiated
+after **every** operation counting towards the threshold, meaning either
+operations for retiring records or releases of `Guard`s, in case the
+`count-release` feature is enabled.
+The env var can be specified e.g. by invoking `cargo` with:
 
-The `nightly` feature enables the use of `Vec::drain_filter` for reclaiming
-retired records, which may be slightly more performant than the solutions
-available in the current stable version.
+```
+env HAZPTR_SCAN_FREQ=1 cargo build
+```
+
+It is necessary to call `cargo clean`, before attempting to change this variable
+once set, in order to force a rebuild with the new value.
+
+As a general rule, a lower reclamation frequency is better performance-wise, but
+could lead to the accumulation of large amounts of retired but un-reclaimed
+records (garbage).
 
 ### Usage in `#[no_std]` environments
 
-When building the crate without the default-enabled `std` feature, it becomes
+When building the crate without the (default) `std` feature, it becomes
 possible to use its functionality in an `#[no_std] + alloc` environment, albeit
 with arguably worse ergonomics.
 In this configuration, the crate's public API additionally exposes the `Local`
 type.
-Additionally, instead of exporting the `Guarded` type, a different
-`LocalGuarded` type is exported, which contains an explicit reference to the
-thread local state.
+Also, instead of exporting the `Guard` type, a different `LocalGuard` type is
+exported, which contains an explicit reference to the thread local state.
 
 In order to use `hazptr` in such an environment, one has to manually to do the
 following steps:
