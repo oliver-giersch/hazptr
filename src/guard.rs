@@ -149,7 +149,7 @@ mod tests {
     use reclaim::prelude::*;
     use reclaim::typenum::U0;
 
-    use crate::guarded::Guard;
+    use crate::guard::Guard;
     use crate::local::Local;
     use crate::Shared;
 

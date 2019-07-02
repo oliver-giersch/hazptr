@@ -141,7 +141,7 @@ pub type Unprotected<T, N> = reclaim::Unprotected<T, HP, N>;
 mod default;
 
 mod global;
-mod guarded;
+mod guard;
 mod hazard;
 mod local;
 mod retired;

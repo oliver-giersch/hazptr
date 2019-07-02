@@ -7,7 +7,7 @@ use crate::hazard::Hazard;
 use crate::local::{Local, LocalAccess, RecycleError};
 use crate::{Unlinked, HP};
 
-pub type Guard = crate::guarded::Guard<DefaultAccess>;
+pub type Guard = crate::guard::Guard<DefaultAccess>;
 
 // Per-thread instances of `Local`
 thread_local!(static LOCAL: Local = Local::new());
