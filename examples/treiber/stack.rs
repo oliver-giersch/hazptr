@@ -1,12 +1,15 @@
+//! An implementation of Treiber's stack with hazard pointers.
+//!
+//! There is a total of three lines of unsafe code.
+
 use std::mem::ManuallyDrop;
 use std::ptr;
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 
 use hazptr::typenum::U0;
-use hazptr::Guard;
+use hazptr::{Guard, Owned};
 
 type Atomic<T> = hazptr::Atomic<T, U0>;
-type Owned<T> = hazptr::Owned<T, U0>;
 
 #[derive(Default)]
 pub struct Stack<T> {
@@ -40,7 +43,7 @@ impl<T> Stack<T> {
     pub fn pop(&self) -> Option<T> {
         let mut guard = Guard::new();
 
-        // (TRE:2) this `Acquire` load synchronizes with the `Release` CAS in (TRE:1)
+        // (TRE:2) this `Acquire` load synchronizes-with the `Release` CAS in (TRE:1)
         while let Some(head) = self.head.load(Acquire, &mut guard) {
             let next = head.next.load_unprotected(Relaxed);
 

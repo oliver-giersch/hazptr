@@ -7,7 +7,7 @@
 //! fat pointers, so they do maintain dynamic type information, of which only
 //! the concrete `Drop` implementation is actually required.
 //! They are stored in `RetiredBag` structs and removed (i.e. dropped and
-//! deallocated) only when no thread has an active hazard pointer protecting the
+//! de-allocated) only when no thread has an active hazard pointer protecting the
 //! same memory address of the reclaimed record.
 //!
 //! # Abandoned Bags
@@ -25,12 +25,15 @@
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 
+use core::cmp;
 use core::mem;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{
     AtomicPtr,
     Ordering::{Acquire, Relaxed, Release},
 };
+
+use crate::hazard::Protected;
 
 pub(crate) type Retired = reclaim::Retired<crate::HP>;
 
@@ -47,7 +50,7 @@ pub(crate) type Retired = reclaim::Retired<crate::HP>;
 /// many retired records are cached at any time.
 #[derive(Debug)]
 pub(crate) struct RetiredBag {
-    pub inner: Vec<Retired>,
+    pub inner: Vec<ReclaimOnDrop>,
     next: Option<NonNull<RetiredBag>>,
 }
 
@@ -61,20 +64,54 @@ impl RetiredBag {
     }
 
     /// Merges `self` with the given other `Vec`, which is then dropped
-    /// (deallocated).
+    /// (de-allocated).
     ///
     /// If the `other` bag has substantially higher (free) capacity than `self`,
     /// both vectors are swapped before merging.
     /// By keeping the larger vector in this case and dropping the smaller one,
-    /// instead, it could be possible to avoid/defer future reallocations, when
+    /// instead, it could be possible to avoid/defer future re-allocations, when
     /// more records are retired.
     #[inline]
-    pub fn merge(&mut self, mut other: Vec<Retired>) {
+    pub fn merge(&mut self, mut other: Vec<ReclaimOnDrop>) {
         if (other.capacity() - other.len()) > self.inner.capacity() {
             mem::swap(&mut self.inner, &mut other);
         }
 
         self.inner.append(&mut other);
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// ReclaimOnDrop
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Debug)]
+pub(crate) struct ReclaimOnDrop(Retired);
+
+impl ReclaimOnDrop {
+    /// Compares the address of `protected` with the address of `self`.
+    ///
+    /// This is used for binary search, so the argument order may matter!
+    #[inline]
+    pub fn compare_with(&self, protected: Protected) -> cmp::Ordering {
+        protected.address().cmp(&self.0.address())
+    }
+}
+
+impl From<Retired> for ReclaimOnDrop {
+    #[inline]
+    fn from(retired: Retired) -> Self {
+        Self(retired)
+    }
+}
+
+impl Drop for ReclaimOnDrop {
+    #[inline]
+    fn drop(&mut self) {
+        // this is safe because it is guaranteed that even in case of a panic,
+        // retired records are only ever dropped during the course of
+        // `LocalInner::scan_hazards`.
+        unsafe { self.0.reclaim() };
     }
 }
 
@@ -142,7 +179,7 @@ mod tests {
     use std::ptr::NonNull;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use super::{AbandonedBags, Retired, RetiredBag};
+    use super::{AbandonedBags, ReclaimOnDrop, Retired, RetiredBag};
 
     struct DropCount<'a>(&'a AtomicUsize);
     impl Drop for DropCount<'_> {
@@ -161,25 +198,25 @@ mod tests {
         let rec2 = NonNull::from(Box::leak(Box::new(2.2)));
         let rec3 = NonNull::from(Box::leak(Box::new(String::from("String"))));
 
-        bag1.inner.push(unsafe { Retired::new_unchecked(rec1) });
-        bag1.inner.push(unsafe { Retired::new_unchecked(rec2) });
-        bag1.inner.push(unsafe { Retired::new_unchecked(rec3) });
+        bag1.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec1) }));
+        bag1.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec2) }));
+        bag1.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec3) }));
 
         let mut bag2 = Box::new(RetiredBag::new());
 
         let rec4 = NonNull::from(Box::leak(Box::new(vec![1, 2, 3, 4])));
         let rec5 = NonNull::from(Box::leak(Box::new("slice")));
 
-        bag2.inner.push(unsafe { Retired::new_unchecked(rec4) });
-        bag2.inner.push(unsafe { Retired::new_unchecked(rec5) });
+        bag2.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec4) }));
+        bag2.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec5) }));
 
         let mut bag3 = Box::new(RetiredBag::new());
 
         let rec6 = NonNull::from(Box::leak(Box::new(DropCount(&count))));
         let rec7 = NonNull::from(Box::leak(Box::new(DropCount(&count))));
 
-        bag3.inner.push(unsafe { Retired::new_unchecked(rec6) });
-        bag3.inner.push(unsafe { Retired::new_unchecked(rec7) });
+        bag3.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec6) }));
+        bag3.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec7) }));
 
         let abandoned = AbandonedBags::new();
         abandoned.push(bag1);

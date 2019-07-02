@@ -55,9 +55,9 @@
 //!
 //! # Compare-and-Swap
 //!
-//! The atomic [`compare_exchange`][reclaim::Atomic::compare_exchange] method of the
-//! [`Atomic`] type is highly versatile and uses generics and (internal) traits
-//! in order to achieve some degree of argument *overloading*.
+//! The atomic [`compare_exchange`][reclaim::Atomic::compare_exchange] method of
+//! the [`Atomic`] type is highly versatile and uses generics and (internal)
+//! traits in order to achieve some degree of argument *overloading*.
 //! The `current` and `new` arguments accept a wide variety of pointer types,
 //! interchangeably.
 //!
@@ -109,7 +109,6 @@
 //! [reclaim]: https://github.com/oliver-giersch/reclaim
 
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
-#![cfg_attr(feature = "nightly", feature(drain_filter))]
 #![warn(missing_docs)]
 
 #[cfg(not(feature = "std"))]
@@ -138,28 +137,28 @@ pub type Unlinked<T, N> = reclaim::Unlinked<T, HP, N>;
 /// reclamation scheme.
 pub type Unprotected<T, N> = reclaim::Unprotected<T, HP, N>;
 
-#[cfg(feature = "std")]
+#[cfg(any(test, feature = "std"))]
 mod default;
 
-mod bag;
 mod global;
-mod guarded;
+mod guard;
 mod hazard;
 mod local;
+mod retired;
 
 cfg_if! {
     if #[cfg(feature = "std")] {
         /// A guarded pointer that can be used to acquire hazard pointers.
         pub type Guard = crate::default::Guard;
     } else {
-        pub use crate::local::{Local, RecycleErr};
+        pub use crate::local::{Local, RecycleError};
         /// A **thread local** guarded pointer that can be used to acquire
         /// hazard pointers.
         pub type LocalGuard<'a> = crate::guarded::Guard<&'a Local>;
     }
 }
 
-use crate::bag::Retired;
+use crate::retired::Retired;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HP
@@ -171,8 +170,7 @@ pub struct HP;
 
 unsafe impl Reclaim for HP {
     type Local = crate::local::Local;
-    // hazard pointers do not require any extra information per each allocated record
-    type RecordHeader = ();
+    type RecordHeader = (); // no extra header per allocated record is required
 
     #[inline]
     unsafe fn retire_local<T: 'static, N: Unsigned>(local: &Self::Local, unlinked: Unlinked<T, N>) {
@@ -189,9 +187,9 @@ unsafe impl Reclaim for HP {
     }
 }
 
-// TSAN can not correctly asses ordering restraints from explicit fences, so
-// memory operations around such fences need stricter ordering than `Relaxed`,
-// when it is used.
+// The ThreadSanitizer can not correctly asses ordering restraints from explicit
+// fences, so memory operations around such fences need stricter ordering than
+// `Relaxed`, when instrumentation is chosen.
 
 #[cfg(not(feature = "sanitize-threads"))]
 mod sanitize {

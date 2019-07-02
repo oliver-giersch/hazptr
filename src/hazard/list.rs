@@ -52,7 +52,7 @@
 //! reclamation the worst-case outcome is a record not being reclaimed that
 //! would actually be a valid candidate for reclamation.
 
-#[cfg(not(feature = "std"))]
+#[cfg(not(any(test, feature = "std")))]
 use alloc::boxed::Box;
 
 use core::iter::FusedIterator;
@@ -66,11 +66,11 @@ use core::sync::atomic::{
 use reclaim::align::CacheAligned;
 use reclaim::leak::Owned;
 
-type Atomic<T> = reclaim::leak::Atomic<T, reclaim::typenum::U0>;
-type Shared<'g, T> = reclaim::leak::Shared<'g, T, reclaim::typenum::U0>;
-
 use crate::hazard::{Hazard, FREE, THREAD_RESERVED};
 use crate::sanitize::{RELEASE_FAIL, RELEASE_SUCCESS};
+
+type Atomic<T> = reclaim::leak::Atomic<T, reclaim::typenum::U0>;
+type Shared<'g, T> = reclaim::leak::Shared<'g, T, reclaim::typenum::U0>;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HazardList
@@ -119,7 +119,8 @@ impl HazardList {
 
         while let Some(node) = curr.map(Shared::into_ref) {
             if node.hazard().protected.load(Relaxed) == FREE {
-                // (LIS:3P) this `Release` CAS synchronizes-with ...
+                // (LIS:3P) this `SeqCst`/`Release` CAS synchronizes-with the `SeqCst` fence (LOC:2)
+                // and enforces a total order in case BOTH are `SeqCst`
                 let prev = node.hazard.protected.compare_and_swap(FREE, ptr, order);
 
                 if prev == FREE {
