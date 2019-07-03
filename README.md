@@ -1,6 +1,6 @@
 # Hazptr
 
-Hazard pointer based concurrent memory reclamation.
+Hazard pointer based concurrent lock-free memory reclamation.
 
 [![Build Status](https://travis-ci.com/oliver-giersch/hazptr.svg?branch=master)](
 https://travis-ci.com/oliver-giersch/hazptr)
@@ -89,7 +89,7 @@ env HAZPTR_SCAN_FREQ=1 cargo build
 
 Alternatively, this variable could also be set as part of a build script:
 
-```
+```rust
 // build.rs
 
 fn main() {
@@ -107,7 +107,7 @@ records (garbage).
 ### Usage in `#[no_std]` environments
 
 When building the crate without the (default) `std` feature, it becomes
-possible to use its functionality in an `#[no_std] + alloc` environment, albeit
+possible to use its functionality in an `#[no_std]` + `alloc` environment, albeit
 with arguably worse ergonomics.
 In this configuration, the crate's public API additionally exposes the `Local`
 type.
