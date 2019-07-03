@@ -8,7 +8,7 @@ https://travis-ci.com/oliver-giersch/hazptr)
 [![Documentation](https://docs.rs/hazptr/badge.svg)](https://docs.rs/hazptr)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](
 https://github.com/oliver-giersch/hazptr)
-[![Rust 1.36+](https://img.shields.io/badge/rust-1.28+-lightgray.svg)](
+[![Rust 1.31+](https://img.shields.io/badge/rust-1.31+-lightgray.svg)](
 https://www.rust-lang.org)
 
 Whenever a thread reads a value from shared memory it also protects the loaded
@@ -29,7 +29,7 @@ hazptr = "0.1"
 
 ## Minimum Supported Rust Version (MSRV)
 
-The minimum supported rust version for this crate is 1.28.0.
+The minimum supported rust version for this crate is 1.31.0.
 
 In case the (default) `std` feature is not used, the MSRV is 1.36.0.
 
@@ -89,6 +89,16 @@ The env var can be specified e.g. by invoking `cargo` with:
 env HAZPTR_SCAN_FREQ=1 cargo build
 ```
 
+Alternatively, this variable could also be set as part of a build script:
+
+```
+// build.rs
+
+fn main() {
+    println!("cargo:rustc-env=HAZPTR_SCAN_FREQ=1");
+}
+```
+
 It is necessary to call `cargo clean`, before attempting to change this variable
 once set, in order to force a rebuild with the new value.
 
@@ -111,7 +121,7 @@ following steps:
 
 - for every thread, create a separate `Local` instance
 - hazard pointers can only be created by explicitly passing a reference to the
-  current thread's `Local` instance 
+  current thread's `Local` instance
 
 ## License
 

@@ -361,7 +361,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "max-reclamation-freq", ignore)]
     fn drop() {
         const BELOW_THRESHOLD: usize = scan_threshold() as usize / 2;
 
