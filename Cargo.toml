@@ -10,6 +10,7 @@ documentation = "https://docs.rs/hazptr"
 keywords = ["hazard", "pointer", "concurrent", "reclamation", "lock-free"]
 edition = "2018"
 build = "build.rs"
+exclude = [".travis.yml", "ci/*", "DEBUG.md"]
 
 [features]
 default = ["std"]
