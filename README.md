@@ -93,6 +93,7 @@ Alternatively, this variable could also be set as part of a build script:
 // build.rs
 
 fn main() {
+    // alternative: std::env::set_var("HAZPTR_SCAN_FREQ", "1")
     println!("cargo:rustc-env=HAZPTR_SCAN_FREQ=1");
 }
 ```

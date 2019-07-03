@@ -4,6 +4,8 @@ use std::io::Write;
 use std::path::Path;
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=HAZPTR_SCAN_FREQ");
+
     let out_dir = env::var("OUT_DIR").expect("no out directory");
     let dest = Path::new(&out_dir).join("build_constants.rs");
 
