@@ -1,10 +1,6 @@
 language: rust
 cache: cargo
 
-branches:
-    only:
-      - master
-
 rust:
 #  - 1.36.0
 #  - stable
@@ -12,8 +8,3 @@ rust:
   - beta
 
 script: ./ci/default.sh
-
-matrix:
-  include:
-    - rust: 1.31.0
-      script: ./ci/2018edition.sh

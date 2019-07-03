@@ -8,7 +8,7 @@ https://travis-ci.com/oliver-giersch/hazptr)
 [![Documentation](https://docs.rs/hazptr/badge.svg)](https://docs.rs/hazptr)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](
 https://github.com/oliver-giersch/hazptr)
-[![Rust 1.31+](https://img.shields.io/badge/rust-1.31+-lightgray.svg)](
+[![Rust 1.36+](https://img.shields.io/badge/rust-1.36+-lightgray.svg)](
 https://www.rust-lang.org)
 
 Whenever a thread reads a value from shared memory it also protects the loaded
@@ -29,9 +29,7 @@ hazptr = "0.1"
 
 ## Minimum Supported Rust Version (MSRV)
 
-The minimum supported rust version for this crate is 1.31.0.
-
-In case the (default) `std` feature is not used, the MSRV is 1.36.0.
+The minimum supported rust version for this crate is 1.36.0.
 
 ## Comparison with [crossbeam-epoch](https://crates.io/crates/crossbeam-epoch)
 
