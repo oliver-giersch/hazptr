@@ -5,17 +5,15 @@ branches:
     only:
       - master
 
+rust:
+#  - 1.36.0
+#  - stable
+  - nightly
+  - beta
+
+script: ./ci/default.sh
+
 matrix:
-  fast_finish: true
   include:
     - rust: 1.31.0
       script: ./ci/2018edition.sh
-    - rust: 1.36.0
-      script: ./ci/default.sh
-    - rust: stable
-      script: ./ci/default.sh
-    - rust: nightly
-      script: ./ci/default.sh
-    - rust: beta
-      script: ./ci/default.sh
-
