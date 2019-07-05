@@ -24,7 +24,7 @@ Add this to your `Cargo.toml`
 
 ```
 [dependencies]
-hazptr = "0.1"
+hazptr = "0.1.1"
 ```
 
 ## Minimum Supported Rust Version (MSRV)
