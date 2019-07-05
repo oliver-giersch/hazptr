@@ -32,9 +32,7 @@ version = "0.4.10"
 default-features = false
 
 [dependencies.reclaim]
-# version = "0.2.0"
-git = "https://github.com/oliver-giersch/reclaim"
-branch = "0.2.x"
+version = "0.2.0"
 default-features = false
 
 [dev-dependencies]

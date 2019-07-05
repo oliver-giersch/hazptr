@@ -67,7 +67,7 @@ where
                 Found { prev, curr, next } => {
                     let next_marked = Marked::marked(next, DELETE_TAG);
                     // (ORD:2) this `Acquire` CAS synchronizes-with the `Release` CAS (ORD:1),
-                    // (ORD:3), (ORD:a)
+                    // (ORD:3), (ORD:6)
                     if curr.next().compare_exchange(next, next_marked, Acquire, Relaxed).is_err() {
                         continue;
                     }
@@ -107,7 +107,7 @@ where
     // this function uses unsafe code internally, but the interface is safe:
     // the three guards are each advanced in turn and are guaranteed to eventually protect all of
     // the returned references.
-    // FIXME: Try some refactoring when NLL+ are there?
+    // FIXME: Try some refactoring when NLL+ is there?
     fn find<'set, 'g, Q>(&'set self, value: &Q, guards: &'g mut Guards) -> FindResult<'set, 'g, T>
     where
         T: Borrow<Q>,
@@ -183,7 +183,7 @@ unsafe fn found_result<'a, 'set: 'a, 'g: 'set, T: 'static>(
     curr: Shared<'a, Node<T>>,
     next: Marked<Shared<'a, Node<T>>>,
 ) -> FindResult<'set, 'g, T> {
-    Found { prev, curr: mem::transmute(curr), next: mem::transmute(next) }
+    Found { prev, curr: Shared::cast(curr), next: next.map(|next| Shared::cast(next)) }
 }
 
 #[inline]
@@ -191,7 +191,7 @@ unsafe fn insert_result<'a, 'set: 'a, 'g: 'set, T: 'static>(
     prev: &'set Atomic<Node<T>>,
     curr: Shared<'a, Node<T>>,
 ) -> FindResult<'set, 'g, T> {
-    Insert { prev, next: Some(mem::transmute(curr)) }
+    Insert { prev, next: Some(Shared::cast(curr)) }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -16,6 +16,11 @@ unsafe impl GlobalReclaim for HP {
     type Guard = Guard;
 
     #[inline]
+    fn try_flush() {
+        LOCAL.with(Local::try_flush);
+    }
+    
+    #[inline]
     unsafe fn retire<T: 'static, N: Unsigned>(unlinked: Unlinked<T, N>) {
         LOCAL.with(move |local| Self::retire_local(local, unlinked))
     }

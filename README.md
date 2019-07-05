@@ -74,17 +74,17 @@ their retirement is rare.
 ### Scan Frequency
 
 The threshold value used for determining the frequency of GC scans can be
-customized through the `HAZPTR_SCAN_FREQ` environment variable.
+customized through the `HAZPTR_SCAN_THRESHOLD` environment variable.
 This variable can be any positive non-zero 32-bit integer value and is 100 by
 default, i.e. when not passing the env var during the build process.
-A scan frequency of 1 means, for example, that a GC scan is initiated
+A scan threshold of 1 means, for example, that a GC scan is initiated
 after **every** operation counting towards the threshold, meaning either
 operations for retiring records or releases of `Guard`s, in case the
 `count-release` feature is enabled.
 The env var can be specified e.g. by invoking `cargo` with:
 
 ```
-env HAZPTR_SCAN_FREQ=1 cargo build
+env HAZPTR_SCAN_THRESHOLD=1 cargo build
 ```
 
 Alternatively, this variable could also be set as part of a build script:
@@ -93,17 +93,17 @@ Alternatively, this variable could also be set as part of a build script:
 // build.rs
 
 fn main() {
-    // alternative: std::env::set_var("HAZPTR_SCAN_FREQ", "1")
-    println!("cargo:rustc-env=HAZPTR_SCAN_FREQ=1");
+    // alternative: std::env::set_var("HAZPTR_SCAN_THRESHOLD", "1")
+    println!("cargo:rustc-env=HAZPTR_SCAN_THRESHOLD=1");
 }
 ```
 
 It is necessary to call `cargo clean`, before attempting to change this variable
 once set, in order to force a rebuild with the new value.
 
-As a general rule, a lower reclamation frequency is better performance-wise, but
-could lead to the accumulation of large amounts of retired but un-reclaimed
-records (garbage).
+As a general rule, a higher scan threshold is better performance-wise, since
+threads have to attempt to reclaim records less frequently, but could lead to
+the accumulation of large amounts of garbage and also degrade performance.
 
 ### Usage in `#[no_std]` environments
 

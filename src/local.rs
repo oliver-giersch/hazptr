@@ -96,6 +96,12 @@ impl Local {
         }))
     }
 
+    /// Attempts to reclaim some retired records.
+    #[inline]
+    pub(crate) fn try_flush(&self) {
+        unsafe { &mut *self.0.get() }.try_flush();
+    }
+
     /// Retires a record and increases the operations count.
     ///
     /// If the operations count reaches a threshold, a scan is triggered which
@@ -160,6 +166,17 @@ struct LocalInner {
 }
 
 impl LocalInner {
+    /// Attempts to reclaim some retired records.
+    #[inline]
+    fn try_flush(&mut self) {
+        // try to adopt and merge any (global) abandoned retired bags
+        if let Some(abandoned_bag) = GLOBAL.try_adopt_abandoned_records() {
+            self.retired_bag.merge(abandoned_bag.inner);
+        }
+
+        let _ = self.scan_hazards();
+    }
+
     /// Increases the operations count and triggers a scan if the threshold is
     /// reached.
     #[inline]
@@ -167,12 +184,7 @@ impl LocalInner {
         self.ops_count += 1;
 
         if self.ops_count == scan_threshold() {
-            // try to adopt and merge any (global) abandoned retired bags
-            if let Some(abandoned_bag) = GLOBAL.try_adopt_abandoned_records() {
-                self.retired_bag.merge(abandoned_bag.inner);
-            }
-
-            let _ = self.scan_hazards();
+            self.try_flush();
             self.ops_count = 0;
         }
     }
