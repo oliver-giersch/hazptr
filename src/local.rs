@@ -30,10 +30,9 @@ use crate::sanitize;
 const HAZARD_CACHE: usize = 16;
 const SCAN_CACHE: usize = 128;
 
-include!(concat!(env!("OUT_DIR"), "/build_constants.rs"));
-
+// FIXME: replace with one-shot init
 const fn scan_threshold() -> u32 {
-    SCAN_THRESHOLD
+    100
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -167,7 +166,7 @@ struct LocalInner {
 
 impl LocalInner {
     /// Attempts to reclaim some retired records.
-    #[inline]
+    #[cold]
     fn try_flush(&mut self) {
         self.ops_count = 0;
         // try to adopt and merge any (global) abandoned retired bags
