@@ -53,3 +53,7 @@ required-features = ["std"]
 [[test]]
 name = "integration"
 required-features = ["std", "count-release"]
+
+# for analyzing assembly output of main.rs
+[profile.release]
+debug = true
