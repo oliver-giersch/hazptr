@@ -11,7 +11,7 @@ static GLOBAL: Atomic<i32> = Atomic::null();
 fn main() {
     init();
     let mut guard = Guard::new();
-    let global = GLOBAL.load(Acquire, &mut guard).unwrap();
+    let _global = GLOBAL.load(Acquire, &mut guard).unwrap();
 }
 
 #[inline(never)]

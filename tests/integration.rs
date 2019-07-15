@@ -5,7 +5,7 @@ use std::sync::{
 use std::thread;
 
 use hazptr::typenum::U0;
-use hazptr::{Guard, Owned};
+use hazptr::{Config, Guard, Owned, CONFIG};
 
 type Atomic<T> = hazptr::Atomic<T, U0>;
 
@@ -19,6 +19,8 @@ impl Drop for DropCount {
 
 #[test]
 fn abandon_on_panic() {
+    CONFIG.init_once(|| Config::with_params(1));
+
     let drop_count = Arc::new(AtomicUsize::new(0));
 
     let records = Arc::new([
@@ -78,6 +80,3 @@ fn abandon_on_panic() {
     // thread 2 and reclaims them
     assert_eq!(drop_count.load(Ordering::Relaxed), 3);
 }
-
-#[test]
-fn release_on_panic() {}
