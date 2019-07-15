@@ -171,8 +171,9 @@ struct LocalInner {
 
 impl LocalInner {
     /// Attempts to reclaim some retired records.
-    #[inline]
+    #[cold]
     fn try_flush(&mut self) {
+        self.ops_count = 0;
         // try to adopt and merge any (global) abandoned retired bags
         if let Some(abandoned_bag) = GLOBAL.try_adopt_abandoned_records() {
             self.retired_bag.merge(abandoned_bag.inner);
@@ -274,13 +275,10 @@ impl From<CapacityError<&'static Hazard>> for RecycleError {
 impl fmt::Display for RecycleError {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use RecycleError::{Access, Capacity};
         match *self {
-            RecycleError::Access => {
-                write!(f, "failed to access already destroyed thread local storage")
-            }
-            RecycleError::Capacity => {
-                write!(f, "thread local cache for hazard pointer already full")
-            }
+            Access => write!(f, "failed to access already destroyed thread local storage"),
+            Capacity => write!(f, "thread local cache for hazard pointer already full"),
         }
     }
 }

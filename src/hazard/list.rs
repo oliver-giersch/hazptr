@@ -102,7 +102,7 @@ impl HazardList {
 
     /// Acquires an already inserted and inactive hazard pointer or allocates a
     /// new one at the tail and returns a reference to it.
-    #[inline]
+    #[cold]
     pub fn get_hazard(&self, protect: Option<NonNull<()>>) -> &Hazard {
         // this should be evaluated at compile-time
         let (ptr, order) = match protect {
