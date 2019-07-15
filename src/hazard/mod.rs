@@ -39,6 +39,8 @@ pub struct Hazard {
     protected: AtomicPtr<()>,
 }
 
+/********** impl inherent *************************************************************************/
+
 impl Hazard {
     /// Marks the hazard as unused (available for acquisition by any thread).
     #[inline]
@@ -97,6 +99,8 @@ impl Hazard {
 /// a pointer is protected or not.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Protected(NonNull<()>);
+
+/********** impl inherent *************************************************************************/
 
 impl Protected {
     /// Gets the memory address of the protected pointer.

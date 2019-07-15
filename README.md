@@ -24,12 +24,12 @@ Add this to your `Cargo.toml`
 
 ```
 [dependencies]
-hazptr = "0.1.1"
+hazptr = "0.2.0"
 ```
 
 ## Minimum Supported Rust Version (MSRV)
 
-The minimum supported rust version for this crate is 1.36.0.
+The minimum supported Rust version for this crate is 1.36.0.
 
 ## Comparison with [crossbeam-epoch](https://crates.io/crates/crossbeam-epoch)
 

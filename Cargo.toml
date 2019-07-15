@@ -1,7 +1,7 @@
 [package]
 name = "hazptr"
 description = "hazard pointer based concurrent memory reclamation"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Oliver Giersch"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
@@ -9,14 +9,13 @@ repository = "https://github.com/oliver-giersch/hazptr.git"
 documentation = "https://docs.rs/hazptr"
 keywords = ["hazard", "pointer", "concurrent", "reclamation", "lock-free"]
 edition = "2018"
-build = "build.rs"
 exclude = [".travis.yml", "ci/*", "DEBUG.md"]
 
 [features]
 default = ["std"]
 
 # disable for use in no_std crates (for limitations see README.md)
-std = ["arrayvec/std", "reclaim/std"]
+std = ["arrayvec/std", "conquer-once/std", "reclaim/std"]
 
 # reclamation threshold is based on count of hazard pointer releases
 count-release = []
@@ -29,6 +28,10 @@ cfg-if = "0.1.7"
 
 [dependencies.arrayvec]
 version = "0.4.10"
+default-features = false
+
+[dependencies.conquer-once]
+git = "https://github.com/oliver-giersch/conquer-once"
 default-features = false
 
 [dependencies.reclaim]

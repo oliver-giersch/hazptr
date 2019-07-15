@@ -114,6 +114,15 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+#[cfg(any(test, feature = "std"))]
+mod default;
+
+mod global;
+mod guard;
+mod hazard;
+mod local;
+mod retired;
+
 pub use reclaim;
 pub use reclaim::typenum;
 
@@ -137,15 +146,6 @@ pub type Unlinked<T, N> = reclaim::Unlinked<T, HP, N>;
 /// reclamation scheme.
 pub type Unprotected<T, N> = reclaim::Unprotected<T, HP, N>;
 
-#[cfg(any(test, feature = "std"))]
-mod default;
-
-mod global;
-mod guard;
-mod hazard;
-mod local;
-mod retired;
-
 cfg_if! {
     if #[cfg(feature = "std")] {
         /// A guarded pointer that can be used to acquire hazard pointers.
@@ -158,7 +158,16 @@ cfg_if! {
     }
 }
 
+#[cfg(not(feature = "std"))]
+use conquer_once::spin::OnceCell;
+#[cfg(feature = "std")]
+use conquer_once::OnceCell;
+
 use crate::retired::Retired;
+
+/// Global one-time configuration for runtime parameters used for memory
+/// reclamation.
+pub static CONFIG: OnceCell<Config> = OnceCell::new();
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HP
@@ -167,6 +176,8 @@ use crate::retired::Retired;
 /// Hazard Pointer based reclamation scheme.
 #[derive(Debug, Default, Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub struct HP;
+
+/********** impl Reclaim **************************************************************************/
 
 unsafe impl Reclaim for HP {
     type Local = crate::local::Local;
@@ -184,6 +195,46 @@ unsafe impl Reclaim for HP {
     ) {
         let unmarked = Unlinked::into_marked_non_null(unlinked).decompose_non_null();
         local.retire_record(Retired::new_unchecked(unmarked));
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Config
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Runtime configuration parameters.
+#[derive(Copy, Clone, Debug)]
+pub struct Config {
+    scan_threshold: u32,
+}
+
+/********** impl Default **************************************************************************/
+
+impl Default for Config {
+    #[inline]
+    fn default() -> Self {
+        Self { scan_threshold: 100 }
+    }
+}
+
+/********** impl inherent *************************************************************************/
+
+impl Config {
+    /// Creates a new [`Config`] with the given parameters
+    ///
+    /// # Panics
+    ///
+    /// This function panics, if `scan_threshold` is 0.
+    #[inline]
+    pub fn with_params(scan_threshold: u32) -> Self {
+        assert!(scan_threshold > 0, "scan threshold must be greater than 0");
+        Self { scan_threshold }
+    }
+
+    /// Returns the scan threshold.
+    #[inline]
+    pub fn scan_threshold(&self) -> u32 {
+        self.scan_threshold
     }
 }
 

@@ -21,7 +21,7 @@ use arrayvec::{ArrayVec, CapacityError};
 use crate::global::GLOBAL;
 use crate::hazard::{Hazard, Protected};
 use crate::retired::{ReclaimOnDrop, Retired, RetiredBag};
-use crate::sanitize;
+use crate::{sanitize, Config, CONFIG};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // constants
@@ -29,12 +29,6 @@ use crate::sanitize;
 
 const HAZARD_CACHE: usize = 16;
 const SCAN_CACHE: usize = 128;
-
-include!(concat!(env!("OUT_DIR"), "/build_constants.rs"));
-
-const fn scan_threshold() -> u32 {
-    SCAN_THRESHOLD
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // LocalAccess (trait)
@@ -74,6 +68,8 @@ where
 #[derive(Debug)]
 pub struct Local(UnsafeCell<LocalInner>);
 
+/********** impl Default ***************************************************************************/
+
 impl Default for Local {
     #[inline]
     fn default() -> Self {
@@ -81,11 +77,14 @@ impl Default for Local {
     }
 }
 
+/********** impl inherent *************************************************************************/
+
 impl Local {
     /// Creates a new container for the thread local state.
     #[inline]
     pub fn new() -> Self {
         Self(UnsafeCell::new(LocalInner {
+            config: CONFIG.try_get().copied().unwrap_or_default(),
             ops_count: 0,
             hazard_cache: ArrayVec::new(),
             scan_cache: Vec::with_capacity(SCAN_CACHE),
@@ -116,6 +115,8 @@ impl Local {
         local.increase_ops_count();
     }
 }
+
+/********** impl LocalAccess **********************************************************************/
 
 impl<'a> LocalAccess for &'a Local {
     /// Attempts to take a reserved hazard from the thread local cache if there
@@ -159,11 +160,14 @@ impl<'a> LocalAccess for &'a Local {
 
 #[derive(Debug)]
 struct LocalInner {
+    config: Config,
     ops_count: u32,
     hazard_cache: ArrayVec<[&'static Hazard; HAZARD_CACHE]>,
     scan_cache: Vec<Protected>,
     retired_bag: ManuallyDrop<Box<RetiredBag>>,
 }
+
+/********** impl inherent *************************************************************************/
 
 impl LocalInner {
     /// Attempts to reclaim some retired records.
@@ -183,9 +187,9 @@ impl LocalInner {
     fn increase_ops_count(&mut self) {
         self.ops_count += 1;
 
-        if self.ops_count == scan_threshold() {
-            self.try_flush();
+        if self.ops_count == self.config.scan_threshold() {
             self.ops_count = 0;
+            self.try_flush();
         }
     }
 
@@ -222,6 +226,8 @@ impl LocalInner {
     }
 }
 
+/********** impl Drop *****************************************************************************/
+
 impl Drop for LocalInner {
     #[inline]
     fn drop(&mut self) {
@@ -254,12 +260,16 @@ pub enum RecycleError {
     Capacity,
 }
 
+/********** impl From *****************************************************************************/
+
 impl From<CapacityError<&'static Hazard>> for RecycleError {
     #[inline]
     fn from(_: CapacityError<&'static Hazard>) -> Self {
         RecycleError::Capacity
     }
 }
+
+/********** impl Display **************************************************************************/
 
 impl fmt::Display for RecycleError {
     #[inline]
@@ -275,6 +285,8 @@ impl fmt::Display for RecycleError {
     }
 }
 
+/********** impl Error ****************************************************************************/
+
 #[cfg(feature = "std")]
 impl error::Error for RecycleError {}
 
@@ -285,8 +297,9 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::retired::Retired;
+    use crate::Config;
 
-    use super::{scan_threshold, Local, LocalAccess, HAZARD_CACHE, SCAN_CACHE};
+    use super::{Local, LocalAccess, HAZARD_CACHE, SCAN_CACHE};
 
     struct DropCount<'a>(&'a AtomicUsize);
     impl Drop for DropCount<'_> {
@@ -338,21 +351,21 @@ mod tests {
     #[test]
     #[cfg_attr(feature = "count-release", ignore)]
     fn retire() {
-        const THRESHOLD: usize = scan_threshold() as usize;
+        let threshold = Config::default().scan_threshold();
 
         let count = AtomicUsize::new(0);
         let local = Local::new();
 
         // allocate & retire (THRESHOLD - 1) records
-        (0..THRESHOLD - 1)
+        (0..threshold - 1)
             .map(|_| Box::new(DropCount(&count)))
             .map(|record| unsafe { Retired::new_unchecked(NonNull::from(Box::leak(record))) })
             .for_each(|retired| local.retire_record(retired));
 
         {
             let inner = unsafe { &*local.0.get() };
-            assert_eq!(THRESHOLD - 1, inner.ops_count as usize);
-            assert_eq!(THRESHOLD - 1, inner.retired_bag.inner.len());
+            assert_eq!(threshold - 1, inner.ops_count);
+            assert_eq!((threshold - 1) as usize, inner.retired_bag.inner.len());
         }
 
         // nothing has been dropped so far
@@ -369,23 +382,23 @@ mod tests {
             assert_eq!(0, inner.retired_bag.inner.len());
         }
 
-        assert_eq!(THRESHOLD, count.load(Ordering::Relaxed));
+        assert_eq!(threshold as usize, count.load(Ordering::Relaxed));
     }
 
     #[test]
     fn drop() {
-        const BELOW_THRESHOLD: usize = scan_threshold() as usize / 2;
+        let below_threshold = Config::default().scan_threshold() / 2;
 
         let count = AtomicUsize::new(0);
         let local = Local::new();
 
-        (0..BELOW_THRESHOLD)
+        (0..below_threshold)
             .map(|_| Box::new(DropCount(&count)))
             .map(|record| unsafe { Retired::new_unchecked(NonNull::from(Box::leak(record))) })
             .for_each(|retired| local.retire_record(retired));
 
         // all retired records are reclaimed when local is dropped
         mem::drop(local);
-        assert_eq!(BELOW_THRESHOLD, count.load(Ordering::Relaxed));
+        assert_eq!(below_threshold as usize, count.load(Ordering::Relaxed));
     }
 }

@@ -19,7 +19,11 @@ pub struct Guard<L: LocalAccess> {
     local_access: L,
 }
 
+/********** impl LocalAccess **********************************************************************/
+
 unsafe impl<L: LocalAccess + Send> Send for Guard<L> {}
+
+/********** impl Clone ****************************************************************************/
 
 impl<L: LocalAccess> Clone for Guard<L> {
     #[inline]
@@ -43,6 +47,8 @@ macro_rules! release {
         Null($tag)
     }};
 }
+
+/********** impl Protect **************************************************************************/
 
 unsafe impl<L: LocalAccess> Protect for Guard<L> {
     type Reclaimer = HP;
@@ -119,6 +125,8 @@ unsafe impl<L: LocalAccess> Protect for Guard<L> {
     }
 }
 
+/********** impl inherent *************************************************************************/
+
 impl<L: LocalAccess> Guard<L> {
     /// Creates a new [`Guard`] with the given means for `local_access`.
     #[inline]
@@ -126,6 +134,8 @@ impl<L: LocalAccess> Guard<L> {
         Self { hazard: local_access.get_hazard(None), local_access }
     }
 }
+
+/********** impl Drop *****************************************************************************/
 
 impl<L: LocalAccess> Drop for Guard<L> {
     #[inline]

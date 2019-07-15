@@ -54,6 +54,8 @@ pub(crate) struct RetiredBag {
     next: Option<NonNull<RetiredBag>>,
 }
 
+/********** impl inherent *************************************************************************/
+
 impl RetiredBag {
     const DEFAULT_CAPACITY: usize = 256;
 
@@ -88,6 +90,8 @@ impl RetiredBag {
 #[derive(Debug)]
 pub(crate) struct ReclaimOnDrop(Retired);
 
+/********** impl inherent *************************************************************************/
+
 impl ReclaimOnDrop {
     /// Compares the address of `protected` with the address of `self`.
     ///
@@ -98,12 +102,16 @@ impl ReclaimOnDrop {
     }
 }
 
+/********** impl From *****************************************************************************/
+
 impl From<Retired> for ReclaimOnDrop {
     #[inline]
     fn from(retired: Retired) -> Self {
         Self(retired)
     }
 }
+
+/********** impl Drop *****************************************************************************/
 
 impl Drop for ReclaimOnDrop {
     #[inline]
@@ -124,6 +132,8 @@ impl Drop for ReclaimOnDrop {
 pub(crate) struct AbandonedBags {
     head: AtomicPtr<RetiredBag>,
 }
+
+/********** impl inherent *************************************************************************/
 
 impl AbandonedBags {
     /// Creates a new (empty) queue.

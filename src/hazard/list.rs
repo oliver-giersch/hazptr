@@ -82,6 +82,8 @@ pub(crate) struct HazardList {
     head: Atomic<HazardNode>,
 }
 
+/********** impl inherent *************************************************************************/
+
 impl HazardList {
     /// Creates a new empty list.
     #[inline]
@@ -165,6 +167,8 @@ impl HazardList {
     }
 }
 
+/********** impl Drop *****************************************************************************/
+
 impl Drop for HazardList {
     #[inline]
     fn drop(&mut self) {
@@ -186,6 +190,8 @@ pub(crate) struct Iter<'a> {
     current: Option<Shared<'a, HazardNode>>,
 }
 
+/********** impl Iterator *************************************************************************/
+
 impl<'a> Iterator for Iter<'a> {
     type Item = &'a Hazard;
 
@@ -199,6 +205,8 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
+/********** impl FusedIterator ********************************************************************/
+
 impl<'a> FusedIterator for Iter<'a> {}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -210,6 +218,8 @@ struct HazardNode {
     hazard: CacheAligned<Hazard>,
     next: CacheAligned<Atomic<HazardNode>>,
 }
+
+/********** impl inherent *************************************************************************/
 
 impl HazardNode {
     #[inline]

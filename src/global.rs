@@ -29,6 +29,8 @@ pub(crate) struct Global {
     abandoned: AbandonedBags,
 }
 
+/********** impl inherent *************************************************************************/
+
 impl Global {
     /// Creates a new instance of a `Global`.
     #[inline]

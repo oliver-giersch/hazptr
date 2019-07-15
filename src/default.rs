@@ -12,6 +12,8 @@ pub type Guard = crate::guard::Guard<DefaultAccess>;
 // Per-thread instances of `Local`
 thread_local!(static LOCAL: Local = Local::new());
 
+/********** impl GlobalReclaim ********************************************************************/
+
 unsafe impl GlobalReclaim for HP {
     type Guard = Guard;
 
@@ -19,7 +21,7 @@ unsafe impl GlobalReclaim for HP {
     fn try_flush() {
         LOCAL.with(Local::try_flush);
     }
-    
+
     #[inline]
     unsafe fn retire<T: 'static, N: Unsigned>(unlinked: Unlinked<T, N>) {
         LOCAL.with(move |local| Self::retire_local(local, unlinked))
@@ -31,12 +33,16 @@ unsafe impl GlobalReclaim for HP {
     }
 }
 
+/********** impl inherent *************************************************************************/
+
 impl Guard {
     #[inline]
     pub fn new() -> Self {
         Self::with_access(DefaultAccess)
     }
 }
+
+/********** impl Default **************************************************************************/
 
 impl Default for Guard {
     #[inline]
@@ -51,6 +57,8 @@ impl Default for Guard {
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct DefaultAccess;
+
+/********** impl LocalAccess **********************************************************************/
 
 impl LocalAccess for DefaultAccess {
     #[inline]
