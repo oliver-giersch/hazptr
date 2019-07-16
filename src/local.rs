@@ -230,7 +230,7 @@ impl LocalInner {
 /********** impl Drop *****************************************************************************/
 
 impl Drop for LocalInner {
-    #[inline]
+    #[cold]
     fn drop(&mut self) {
         for hazard in &self.hazard_cache {
             hazard.set_free(sanitize::RELAXED_STORE);
