@@ -27,7 +27,7 @@ sanitize-threads = []
 cfg-if = "0.1.7"
 
 [dependencies.arrayvec]
-version = "0.4.10"
+version = "0.4.11"
 default-features = false
 
 [dependencies.conquer-once]
