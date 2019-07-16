@@ -17,7 +17,7 @@ default = ["std"]
 # disable for use in no_std crates (for limitations see README.md)
 std = ["arrayvec/std", "conquer-once/std", "reclaim/std"]
 
-# reclamation threshold is based on count of hazard pointer releases
+# counting towards the scan threshold caused by dropping hazard pointer guards
 count-release = []
 
 # for instrumentation with TSAN
