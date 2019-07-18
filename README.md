@@ -56,7 +56,7 @@ of Treiber's stack with hazard pointers or
 [examples/hash_set/ordered.rs](examples/hash_set/ordered/mod.rs) for an
 implementation of a concurrent hash set.
 
-## Features
+## Crate Features & Runtime Configuration
 
 The following features are defined for this crate:
 
@@ -71,12 +71,29 @@ out of scope (i.e. being released) instead.
 This can be beneficial, e.g. when there are only few records overall and
 their retirement is rare.
 
-### Scan Frequency
+### Scan Threshold
 
-The threshold value used for determining the frequency of GC scans can be
-customized through the `HAZPTR_SCAN_THRESHOLD` environment variable.
-This variable can be any positive non-zero 32-bit integer value and is 100 by
-default, i.e. when not passing the env var during the build process.
+The scan threshold value is used internally for determining the frequency of
+GC scans.
+These scans traverse the thread local list of retired records and reclaim all
+records which are no longer protected by any hazard pointers.
+This threshold variable can be any positive non-zero 32-bit integer value and
+is set to 100 by default.
+It can be set to a different value exactly once during the runtime of the
+program.
+Note that only threads that are spawned **after** setting this variable will
+be able to use the adjusted value.
+The following code gives an example for how to adjust this value:
+
+```rust
+use hazptr::{ConfigBuilder, CONFIG};
+
+fn main() {
+    // preferably this should be called before spawning any threads
+    CONFIG.init_once(|| ConfigBuilder::new().scan_threshold(512).build());
+}
+```
+
 A scan threshold of 1 means, for example, that a GC scan is initiated
 after **every** operation counting towards the threshold, meaning either
 operations for retiring records or releases of `Guard`s, in case the
