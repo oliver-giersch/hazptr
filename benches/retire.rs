@@ -37,3 +37,21 @@ fn multi_retire(b: &mut Bencher) {
         }
     });
 }
+
+#[bench]
+fn multi_retire_varied(b: &mut Bencher) {
+    const STEPS: u32 = 100_000;
+    CONFIG.init_once(|| Config::with_params(128));
+
+    let int = Atomic::new(1);
+    let string = Atomic::new(String::from("string"));
+    let arr = Atomic::new([0usize; 16]);
+
+    b.iter(|| unsafe {
+        for _ in 0..STEPS {
+            int.swap(Owned::new(1), Relaxed).unwrap().retire();
+            string.swap(Owned::new(String::from("string")), Relaxed).unwrap().retire();
+            arr.swap(Owned::new([0usize; 16]), Relaxed).unwrap().retire();
+        }
+    });
+}
