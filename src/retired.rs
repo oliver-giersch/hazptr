@@ -57,12 +57,10 @@ pub(crate) struct RetiredBag {
 /********** impl inherent *************************************************************************/
 
 impl RetiredBag {
-    const DEFAULT_CAPACITY: usize = 256;
-
     /// Creates a new `RetiredBag` with default capacity for retired records.
     #[inline]
-    pub fn new() -> Self {
-        Self { inner: Vec::with_capacity(Self::DEFAULT_CAPACITY), next: None }
+    pub fn new(init_cache: usize) -> Self {
+        Self { inner: Vec::with_capacity(init_cache), next: None }
     }
 
     /// Merges `self` with the given other `Vec`, which is then dropped
@@ -93,6 +91,12 @@ pub(crate) struct ReclaimOnDrop(Retired);
 /********** impl inherent *************************************************************************/
 
 impl ReclaimOnDrop {
+    /// Creates a new [`ReclaimOnDrop`] wrapper for `retired`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the returned wrapper is not dropped before
+    /// no hazard pointer protects the retired value anymore.
     #[allow(unused_unsafe)]
     #[inline]
     pub unsafe fn new(retired: Retired) -> Self {
@@ -199,31 +203,31 @@ mod tests {
     fn abandoned_bags() {
         let count = AtomicUsize::new(0);
 
-        let mut bag1 = Box::new(RetiredBag::new());
+        let mut bag1 = Box::new(RetiredBag::new(128));
 
         let rec1 = NonNull::from(Box::leak(Box::new(1)));
         let rec2 = NonNull::from(Box::leak(Box::new(2.2)));
         let rec3 = NonNull::from(Box::leak(Box::new(String::from("String"))));
 
-        bag1.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec1) }));
-        bag1.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec2) }));
-        bag1.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec3) }));
+        bag1.inner.push(unsafe { ReclaimOnDrop::new(Retired::new_unchecked(rec1)) });
+        bag1.inner.push(unsafe { ReclaimOnDrop::new(Retired::new_unchecked(rec2)) });
+        bag1.inner.push(unsafe { ReclaimOnDrop::new(Retired::new_unchecked(rec3)) });
 
-        let mut bag2 = Box::new(RetiredBag::new());
+        let mut bag2 = Box::new(RetiredBag::new(128));
 
         let rec4 = NonNull::from(Box::leak(Box::new(vec![1, 2, 3, 4])));
         let rec5 = NonNull::from(Box::leak(Box::new("slice")));
 
-        bag2.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec4) }));
-        bag2.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec5) }));
+        bag2.inner.push(unsafe { ReclaimOnDrop::new(Retired::new_unchecked(rec4)) });
+        bag2.inner.push(unsafe { ReclaimOnDrop::new(Retired::new_unchecked(rec5)) });
 
-        let mut bag3 = Box::new(RetiredBag::new());
+        let mut bag3 = Box::new(RetiredBag::new(128));
 
         let rec6 = NonNull::from(Box::leak(Box::new(DropCount(&count))));
         let rec7 = NonNull::from(Box::leak(Box::new(DropCount(&count))));
 
-        bag3.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec6) }));
-        bag3.inner.push(ReclaimOnDrop::from(unsafe { Retired::new_unchecked(rec7) }));
+        bag3.inner.push(unsafe { ReclaimOnDrop::new(Retired::new_unchecked(rec6)) });
+        bag3.inner.push(unsafe { ReclaimOnDrop::new(Retired::new_unchecked(rec7)) });
 
         let abandoned = AbandonedBags::new();
         abandoned.push(bag1);
@@ -232,6 +236,6 @@ mod tests {
 
         let merged = abandoned.take_and_merge().unwrap();
         assert_eq!(merged.inner.len(), 7);
-        assert_eq!(RetiredBag::DEFAULT_CAPACITY, merged.inner.capacity());
+        assert_eq!(128, merged.inner.capacity());
     }
 }

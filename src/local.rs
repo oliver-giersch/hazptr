@@ -28,7 +28,7 @@ use crate::{sanitize, Config, CONFIG};
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 const HAZARD_CACHE: usize = 16;
-const SCAN_CACHE: usize = 128;
+const SCAN_CACHE: usize = 64;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // LocalAccess (trait)
@@ -83,14 +83,17 @@ impl Local {
     /// Creates a new container for the thread local state.
     #[inline]
     pub fn new() -> Self {
+        let config = CONFIG.try_get().copied().unwrap_or_default();
+
         Self(UnsafeCell::new(LocalInner {
-            config: CONFIG.try_get().copied().unwrap_or_default(),
+            config,
             ops_count: 0,
+            flush_count: 0,
             hazard_cache: ArrayVec::new(),
             scan_cache: Vec::with_capacity(SCAN_CACHE),
             retired_bag: match GLOBAL.try_adopt_abandoned_records() {
                 Some(boxed) => ManuallyDrop::new(boxed),
-                None => ManuallyDrop::new(Box::new(RetiredBag::new())),
+                None => ManuallyDrop::new(Box::new(RetiredBag::new(config.init_cache()))),
             },
         }))
     }
@@ -160,10 +163,19 @@ impl<'a> LocalAccess for &'a Local {
 
 #[derive(Debug)]
 struct LocalInner {
+    /// The copy of the global configuration that is read once during
+    /// a thread's creation
     config: Config,
-    ops_count: u32,
+    /// The counter for determining when to attempt to adopt abandoned records
+    flush_count: u32,
+    /// The thread local cache for reserved hazard pointers
     hazard_cache: ArrayVec<[&'static Hazard; HAZARD_CACHE]>,
+    /// The counter for determining when to attempt reclamation of retired
+    /// records.
+    ops_count: u32,
+    /// The cache for storing currently protected records during scan attempts
     scan_cache: Vec<Protected>,
+    /// The cache for storing retired records
     retired_bag: ManuallyDrop<Box<RetiredBag>>,
 }
 
@@ -185,21 +197,22 @@ impl LocalInner {
     #[cold]
     fn try_flush(&mut self) {
         self.ops_count = 0;
+
         // try to adopt and merge any (global) abandoned retired bags
         if let Some(abandoned_bag) = GLOBAL.try_adopt_abandoned_records() {
             self.retired_bag.merge(abandoned_bag.inner);
         }
 
-        let _ = self.scan_hazards();
+        self.scan_hazards();
     }
 
     /// Reclaims all locally retired records that are unprotected and returns
     /// the number of reclaimed records.
     #[inline]
-    fn scan_hazards(&mut self) -> usize {
+    fn scan_hazards(&mut self) {
         let len = self.retired_bag.inner.len();
-        if len == 0 {
-            return 0;
+        if len <= self.config.min_required_records() as usize {
+            return;
         }
 
         // (LOC:2) this `SeqCst` fence synchronizes-with the `SeqCst` stores (GUA:3), (GUA:4),
@@ -211,8 +224,6 @@ impl LocalInner {
 
         self.scan_cache.sort_unstable();
         unsafe { self.reclaim_unprotected_records() };
-
-        len - self.retired_bag.inner.len()
     }
 
     // this is declared unsafe because in this function the retired records are actually dropped.
@@ -221,7 +232,7 @@ impl LocalInner {
     unsafe fn reclaim_unprotected_records(&mut self) {
         let scan_cache = &self.scan_cache;
         self.retired_bag.inner.retain(|retired| {
-            // retain (DON'T drop) all records found within the scan cache of protected hazards
+            // retain (i.e. DON'T drop) all records found within the scan cache of protected hazards
             scan_cache.binary_search_by(|&protected| retired.compare_with(protected)).is_ok()
         });
     }
@@ -232,15 +243,15 @@ impl LocalInner {
 impl Drop for LocalInner {
     #[cold]
     fn drop(&mut self) {
-        for hazard in &self.hazard_cache {
-            hazard.set_free(sanitize::RELAXED_STORE);
-        }
-
         // (LOC:3) this `Release` fence synchronizes-with the `SeqCst` fence (LOC:2) but WITHOUT
         // enforcing a total order
         atomic::fence(Release);
 
-        let _ = self.scan_hazards();
+        for hazard in &self.hazard_cache {
+            hazard.set_free(sanitize::RELAXED_STORE);
+        }
+
+        self.scan_hazards();
         // this is safe because the field is neither accessed afterwards nor dropped
         let bag = unsafe { ptr::read(&*self.retired_bag) };
 
@@ -251,7 +262,7 @@ impl Drop for LocalInner {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// RecycleErr
+// RecycleError
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Error type for thread local recycle operations.

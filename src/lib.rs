@@ -117,6 +117,7 @@ extern crate alloc;
 #[cfg(any(test, feature = "std"))]
 mod default;
 
+mod config;
 mod global;
 mod guard;
 mod hazard;
@@ -129,6 +130,8 @@ pub use reclaim::typenum;
 use cfg_if::cfg_if;
 use reclaim::prelude::*;
 use typenum::Unsigned;
+
+pub use crate::config::{Config, ConfigBuilder};
 
 /// A specialization of [`Atomic`][reclaim::Atomic] for the [`HP`] reclamation
 /// scheme.
@@ -195,46 +198,6 @@ unsafe impl Reclaim for HP {
     ) {
         let unmarked = Unlinked::into_marked_non_null(unlinked).decompose_non_null();
         local.retire_record(Retired::new_unchecked(unmarked));
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Config
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// Runtime configuration parameters.
-#[derive(Copy, Clone, Debug)]
-pub struct Config {
-    scan_threshold: u32,
-}
-
-/********** impl Default **************************************************************************/
-
-impl Default for Config {
-    #[inline]
-    fn default() -> Self {
-        Self { scan_threshold: 100 }
-    }
-}
-
-/********** impl inherent *************************************************************************/
-
-impl Config {
-    /// Creates a new [`Config`] with the given parameters
-    ///
-    /// # Panics
-    ///
-    /// This function panics, if `scan_threshold` is 0.
-    #[inline]
-    pub fn with_params(scan_threshold: u32) -> Self {
-        assert!(scan_threshold > 0, "scan threshold must be greater than 0");
-        Self { scan_threshold }
-    }
-
-    /// Returns the scan threshold.
-    #[inline]
-    pub fn scan_threshold(&self) -> u32 {
-        self.scan_threshold
     }
 }
 
