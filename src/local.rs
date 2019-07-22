@@ -170,6 +170,17 @@ struct LocalInner {
 /********** impl inherent *************************************************************************/
 
 impl LocalInner {
+    /// Increases the operations count and triggers a scan if the threshold is
+    /// reached.
+    #[inline]
+    fn increase_ops_count(&mut self) {
+        self.ops_count += 1;
+
+        if self.ops_count == self.config.scan_threshold() {
+            self.try_flush();
+        }
+    }
+
     /// Attempts to reclaim some retired records.
     #[cold]
     fn try_flush(&mut self) {
@@ -180,18 +191,6 @@ impl LocalInner {
         }
 
         let _ = self.scan_hazards();
-    }
-
-    /// Increases the operations count and triggers a scan if the threshold is
-    /// reached.
-    #[inline]
-    fn increase_ops_count(&mut self) {
-        self.ops_count += 1;
-
-        if self.ops_count == self.config.scan_threshold() {
-            self.ops_count = 0;
-            self.try_flush();
-        }
     }
 
     /// Reclaims all locally retired records that are unprotected and returns
