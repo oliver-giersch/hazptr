@@ -5,7 +5,7 @@ use std::sync::{
 use std::thread;
 
 use hazptr::typenum::U0;
-use hazptr::{Config, Guard, Owned, CONFIG};
+use hazptr::{ConfigBuilder, Guard, Owned, CONFIG};
 
 type Atomic<T> = hazptr::Atomic<T, U0>;
 
@@ -19,7 +19,7 @@ impl Drop for DropCount {
 
 #[test]
 fn abandon_on_panic() {
-    CONFIG.init_once(|| Config::with_params(1));
+    CONFIG.init_once(|| ConfigBuilder::new().scan_threshold(1).build());
 
     let drop_count = Arc::new(AtomicUsize::new(0));
 
