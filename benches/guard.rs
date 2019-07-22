@@ -6,13 +6,13 @@ use std::sync::atomic::Ordering::Relaxed;
 
 use test::Bencher;
 
-use hazptr::{Config, Guard, CONFIG};
+use hazptr::{ConfigBuilder, Guard, CONFIG};
 
 type Atomic<T> = hazptr::Atomic<T, hazptr::typenum::U0>;
 
 #[bench]
 fn pin_and_load(b: &mut Bencher) {
-    CONFIG.init_once(|| Config::with_params(128));
+    CONFIG.init_once(|| ConfigBuilder::new().scan_threshold(128).build());
 
     let atomic = Atomic::new(1);
 

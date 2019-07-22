@@ -2,18 +2,20 @@
 
 extern crate test;
 
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::Ordering::{AcqRel, Relaxed};
+use std::thread;
 
 use test::Bencher;
 
-use hazptr::{Config, CONFIG};
+use conquer_once::Lazy;
+use hazptr::{ConfigBuilder, CONFIG};
 
 type Atomic<T> = hazptr::Atomic<T, hazptr::typenum::U0>;
 type Owned<T> = hazptr::Owned<T, hazptr::typenum::U0>;
 
 #[bench]
 fn single_retire(b: &mut Bencher) {
-    CONFIG.init_once(|| Config::with_params(128));
+    CONFIG.init_once(|| ConfigBuilder::new().scan_threshold(128).build());
 
     let global = Atomic::new(1);
 
@@ -26,7 +28,7 @@ fn single_retire(b: &mut Bencher) {
 #[bench]
 fn multi_retire(b: &mut Bencher) {
     const STEPS: u32 = 100_000;
-    CONFIG.init_once(|| Config::with_params(128));
+    CONFIG.init_once(|| ConfigBuilder::new().scan_threshold(128).build());
 
     let global = Atomic::new(1);
 
@@ -41,7 +43,7 @@ fn multi_retire(b: &mut Bencher) {
 #[bench]
 fn multi_retire_varied(b: &mut Bencher) {
     const STEPS: u32 = 100_000;
-    CONFIG.init_once(|| Config::with_params(128));
+    CONFIG.init_once(|| ConfigBuilder::new().scan_threshold(128).build());
 
     let int = Atomic::new(1);
     let string = Atomic::new(String::from("string"));
@@ -54,4 +56,23 @@ fn multi_retire_varied(b: &mut Bencher) {
             arr.swap(Owned::new([0usize; 16]), Relaxed).unwrap().retire();
         }
     });
+}
+
+#[bench]
+fn parallel_retire(b: &mut Bencher) {
+    const THREADS: u32 = 8;
+    const STEPS: u32 = 100_000;
+
+    static GLOBAL: Lazy<Atomic<u32>> = Lazy::new(|| Atomic::new(0));
+
+    let handles: Vec<_> = (0..THREADS)
+        .map(|id| {
+            thread::spawn(|| {
+                for _ in 0..STEPS {
+                    let unlinked = GLOBAL.swap(Owned::new(id), AcqRel).unwrap();
+                    unsafe { unlinked.retire() };
+                }
+            })
+        })
+        .collect();
 }
