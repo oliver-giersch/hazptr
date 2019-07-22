@@ -93,21 +93,18 @@ pub(crate) struct ReclaimOnDrop(Retired);
 /********** impl inherent *************************************************************************/
 
 impl ReclaimOnDrop {
+    #[allow(unused_unsafe)]
+    #[inline]
+    pub unsafe fn new(retired: Retired) -> Self {
+        Self(retired)
+    }
+
     /// Compares the address of `protected` with the address of `self`.
     ///
     /// This is used for binary search, so the argument order may matter!
     #[inline]
     pub fn compare_with(&self, protected: Protected) -> cmp::Ordering {
         protected.address().cmp(&self.0.address())
-    }
-}
-
-/********** impl From *****************************************************************************/
-
-impl From<Retired> for ReclaimOnDrop {
-    #[inline]
-    fn from(retired: Retired) -> Self {
-        Self(retired)
     }
 }
 

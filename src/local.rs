@@ -110,7 +110,7 @@ impl Local {
     #[inline]
     pub(crate) fn retire_record(&self, record: Retired) {
         let local = unsafe { &mut *self.0.get() };
-        local.retired_bag.inner.push(ReclaimOnDrop::from(record));
+        local.retired_bag.inner.push(unsafe { ReclaimOnDrop::new(record) });
         #[cfg(not(feature = "count-release"))]
         local.increase_ops_count();
     }
@@ -218,6 +218,7 @@ impl LocalInner {
 
     // this is declared unsafe because in this function the retired records are actually dropped.
     #[allow(unused_unsafe)]
+    #[inline]
     unsafe fn reclaim_unprotected_records(&mut self) {
         let scan_cache = &self.scan_cache;
         self.retired_bag.inner.retain(|retired| {
