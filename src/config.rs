@@ -3,7 +3,7 @@
 
 const DEFAULT_INIT_CACHE: usize = 128;
 const DEFAULT_MIN_REQUIRED_RECORDS: u32 = 0;
-const DEFAULT_SCAN_THRESHOLD: u32 = 100;
+const DEFAULT_SCAN_THRESHOLD: u32 = 128;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Config
@@ -114,7 +114,7 @@ impl ConfigBuilder {
     }
 
     /// Consumes the [`ConfigBuilder`] and returns a initialized [`Config`].
-    /// 
+    ///
     /// Unspecified parameters are initialized with their default values.
     #[inline]
     pub fn build(self) -> Config {
