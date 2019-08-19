@@ -2,8 +2,8 @@
 
 Hazard pointer based concurrent lock-free memory reclamation.
 
-[![Build Status](https://travis-ci.com/oliver-giersch/hazptr.svg?branch=master)](
-https://travis-ci.com/oliver-giersch/hazptr)
+[![Build Status](https://travis-ci.org/oliver-giersch/hazptr.svg?branch=master)](
+https://travis-ci.org/oliver-giersch/hazptr)
 [![Latest version](https://img.shields.io/crates/v/hazptr.svg)](https://crates.io/crates/hazptr)
 [![Documentation](https://docs.rs/hazptr/badge.svg)](https://docs.rs/hazptr)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](
