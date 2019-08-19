@@ -83,7 +83,7 @@ impl Local {
     /// Creates a new container for the thread local state.
     #[inline]
     pub fn new() -> Self {
-        let config = CONFIG.try_get().copied().unwrap_or_default();
+        let config = CONFIG.try_get().ok().copied().unwrap_or_default();
 
         Self(UnsafeCell::new(LocalInner {
             config,
