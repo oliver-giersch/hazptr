@@ -50,7 +50,7 @@ pub struct Global<A: Alloc> {
 
 Locals contain an explicit reference to their associated `Global`, with which they must have matching policies.
 
-```
+```rust
 struct LocalInner<'a, A: Alloc> {
     config: Config,
     global: &'a Global<A>,
@@ -71,7 +71,10 @@ pub struct Guard<'a, A: Alloc> {
     local: *const Local<'a, A>, // this must be a pointer this since references into std TLS are not allowed
     hazard: &'a Hazard,
 }
+```
 
 ## Retiring Records
 
-It would now be possible to protect pointers with hazard pointers ...
+It would now be possible to protect pointers with hazard pointers belonging to one `Global` and retiring records in a cache
+that is checked against the hazard pointers of **another** `Global`. There is no obvious way to prevent this on a type-level
+and additional runtime checks would likely have to be extensive.
