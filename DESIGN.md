@@ -73,6 +73,12 @@ pub struct Guard<'a, A: Alloc> {
 }
 ```
 
+### Alternative
+
+Instead of storing references to the associated `Local` in a pointer, the `LocalAccess` trait could see continoued usage
+as a means for abstracting over access through TLS or through a safe `&'a Local`, this would change the signature of `Guard`
+to potentially express to lifetimes `'global` and `'local`.
+
 ## Retiring Records
 
 It would now be possible to protect pointers with hazard pointers belonging to one `Global` and retiring records in a cache
