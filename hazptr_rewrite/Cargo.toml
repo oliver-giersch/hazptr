@@ -1,0 +1,18 @@
+[package]
+name = "hazptr_rewrite"
+version = "0.3.0"
+authors = ["oliver <oliver.giersch@googlemail.com>"]
+edition = "2018"
+
+[features]
+default = ["std"]
+
+std = ["arrayvec/std"]
+
+[dependencies.arrayvec]
+version = "0.5.1"
+default-features = false
+
+[dependencies.conquer-reclaim]
+git = "https://github.com/oliver-giersch/conquer-reclaim"
+default-features = false
