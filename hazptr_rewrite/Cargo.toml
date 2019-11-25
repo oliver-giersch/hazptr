@@ -13,6 +13,10 @@ std = ["arrayvec/std"]
 version = "0.5.1"
 default-features = false
 
+[dependencies.conquer-once]
+version = "0.1.2"
+default-features = false
+
 [dependencies.conquer-reclaim]
 git = "https://github.com/oliver-giersch/conquer-reclaim"
 default-features = false

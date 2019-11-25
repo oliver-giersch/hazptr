@@ -126,6 +126,7 @@ impl<'a> LocalAccess for &'a Local {
     /// are any.
     #[inline]
     fn get_hazard(self, protect: Option<NonNull<()>>) -> &'static Hazard {
+        // FIXME: `protect` is only protected when a hazard is retrieved globally
         let local = unsafe { &mut *self.0.get() };
         match local.hazard_cache.pop() {
             Some(hazard) => hazard,

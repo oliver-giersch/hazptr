@@ -19,22 +19,29 @@ use alloc::sync::Arc;
 #[cfg(feature = "std")]
 use std::sync::Arc;
 
-use conquer_reclaim::{Reclaim, ReclaimHandle, Record};
+use conquer_reclaim::{Reclaimer, ReclaimerHandle, Record};
 
-use crate::global::Global;
-use crate::local::Local;
+use crate::global::{Global, GlobalHandle, GlobalRef};
+use crate::local::LocalHandle;
 use crate::policy::Policy;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HP
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-struct HP<P>(PhantomData<P>);
+pub struct HP<P> {
+    global: Arc<Global<P>>,
+}
 
-/********** impl Reclaim **************************************************************************/
+/********** impl Reclaimer ************************************************************************/
 
-unsafe impl<P: Policy> Reclaim for HP<P> {
-    type DefaultHandle = Local<'static, P>;
-    type Header = P::Header;
+unsafe impl<P: Policy> Reclaimer for HP<P> {
     type Global = Global<P>;
+    type Header = P::Header;
+    type Handle = LocalHandle<'static, 'static, P>;
+
+    #[inline]
+    fn create_local_handle(&self) -> Self::Handle {
+        LocalHandle::owning(GlobalHandle::from_owned(Arc::clone(&self.global)))
+    }
 }
