@@ -37,6 +37,7 @@ impl<'local, 'global, P: Policy> Clone for Guard<'local, 'global, P> {
 
     #[inline]
     fn clone_from(&mut self, source: &Self) {
+        // let hazard protect source.hazard
         unimplemented!()
     }
 }

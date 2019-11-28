@@ -2,7 +2,7 @@ use core::convert::AsRef;
 
 use alloc::sync::Arc;
 
-use crate::hazard::Hazard;
+use crate::hazard::{Hazard, HazardList, ProtectStrategy};
 use crate::policy::Policy;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -52,7 +52,7 @@ impl<'global, P: Policy> AsRef<Global<P>> for GlobalHandle<'global, P> {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub struct Global<P: Policy> {
-    hazards: (), //List<Hazard>
+    hazards: HazardList,
     state: P::GlobalState,
 }
 
@@ -60,8 +60,13 @@ pub struct Global<P: Policy> {
 
 impl<P: Policy> Global<P> {
     #[inline]
-    pub fn get_hazard(&self) -> &Hazard {
-        unimplemented!()
+    pub fn get_hazard(&self, strategy: ProtectStrategy) -> &Hazard {
+        match strategy {
+            ProtectStrategy::ReserveOnly => self.hazards.get_or_insert_reserved_hazard(),
+            ProtectStrategy::Protect(protected) => {
+                self.hazards.get_or_insert_protecting_hazard(protected)
+            }
+        }
     }
 }
 

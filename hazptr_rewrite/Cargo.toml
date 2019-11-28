@@ -20,3 +20,8 @@ default-features = false
 [dependencies.conquer-reclaim]
 git = "https://github.com/oliver-giersch/conquer-reclaim"
 default-features = false
+
+[dependencies.conquer-util]
+version = "0.2.0"
+default-features = false
+features = ["align"]

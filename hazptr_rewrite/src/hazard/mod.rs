@@ -3,7 +3,7 @@ mod list;
 use core::ptr::NonNull;
 use core::sync::atomic::AtomicPtr;
 
-// use conquer_util::align::CacheAligned
+pub use self::list::{HazardList, Iter};
 
 const FREE: *mut () = 0 as *mut ();
 const THREAD_RESERVED: *mut () = 1 as *mut ();
@@ -18,6 +18,20 @@ pub struct Hazard {
     protected: AtomicPtr<()>,
 }
 
+/********** impl Hazard ***************************************************************************/
+
+impl Hazard {
+    #[inline]
+    pub const fn new() -> Self {
+        Self { protected: AtomicPtr::new(FREE) }
+    }
+
+    #[inline]
+    pub const fn with_protected(protected: *const ()) -> Self {
+        Self { protected: AtomicPtr::new(protected as *mut _) }
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Protected
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -28,3 +42,33 @@ pub struct Hazard {
 /// a pointer is protected or not.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Protected(NonNull<()>);
+
+/********** impl inherent *************************************************************************/
+
+impl Protected {
+    #[inline]
+    pub fn as_const_ptr(self) -> *const () {
+        self.0.as_ptr() as *const _
+    }
+
+    /// Gets the memory address of the protected pointer.
+    #[inline]
+    pub fn address(self) -> usize {
+        self.0.as_ptr() as usize
+    }
+
+    /// Gets the internal non-nullable pointer.
+    #[inline]
+    pub fn into_inner(self) -> NonNull<()> {
+        self.0
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// ProtectStrategy
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub(crate) enum ProtectStrategy {
+    ReserveOnly,
+    Protect(Protected),
+}
