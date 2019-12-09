@@ -1,12 +1,17 @@
 use core::cell::UnsafeCell;
 use core::convert::AsRef;
-use core::marker::PhantomData;
-use core::mem;
 
-// TODO: if .. else
-use alloc::rc::Rc;
-use alloc::sync::Arc;
-use alloc::vec::Vec;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "std")] {
+        use std::rc::Rc;
+        use std::sync::Arc;
+        use std::vec::Vec;
+    } else {
+        use alloc::rc::Rc;
+        use alloc::sync::Arc;
+        use alloc::vec::Vec;
+    }
+}
 
 use arrayvec::ArrayVec;
 use conquer_reclaim::{ReclaimerHandle, Retired};
@@ -15,7 +20,7 @@ use crate::global::{Global, GlobalHandle};
 use crate::guard::Guard;
 use crate::hazard::{Hazard, Protected};
 use crate::policy::Policy;
-use crate::HP;
+use crate::HPHandle;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // LocalHandle
@@ -75,8 +80,8 @@ impl<'local, 'global, P: Policy> LocalHandle<'local, 'global, P> {
 
 /********** impl ReclaimerHandle ******************************************************************/
 
-impl<'local, 'global, P: Policy> ReclaimerHandle for LocalHandle<'local, 'global, P> {
-    type Reclaimer = HP<P>;
+unsafe impl<'local, 'global, P: Policy> ReclaimerHandle for LocalHandle<'local, 'global, P> {
+    type Reclaimer = HPHandle<P>;
     type Guard = Guard<'local, 'global, P>;
 
     #[inline]

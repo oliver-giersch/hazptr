@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use conquer_once::Lazy;
-use conquer_reclaim::{GlobalReclaimer, Reclaimer, ReclaimerHandle, Retired};
+use conquer_reclaim::{GenericReclaimer, GlobalReclaimer, Reclaimer, ReclaimerHandle, Retired};
 
 use crate::global::GlobalHandle;
 use crate::guard::Guard;
@@ -14,7 +14,7 @@ type Global = crate::global::Global<LocalRetire>;
 /********** global & thread-local *****************************************************************/
 
 static GLOBAL: Lazy<Global> = Lazy::new(Global::default);
-thread_local!(static LOCAL: Rc<Local<LocalRetire>> = Local::new(GlobalHandle::from_ref(&*GLOBAL)));
+thread_local!(static LOCAL: Rc<Local> = Local::new(GlobalHandle::from_ref(&*GLOBAL)));
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // GlobalHP
@@ -27,14 +27,23 @@ pub struct GlobalHP;
 unsafe impl GlobalReclaimer for GlobalHP {
     #[inline]
     fn guard() -> <Self::Handle as ReclaimerHandle>::Guard {
-        let handle = GlobalHandle;
-        handle.guard()
+        GlobalDefaultHandle::guard(GlobalDefaultHandle)
     }
 
     #[inline]
     unsafe fn retire(record: Retired<Self>) {
-        let handle = GlobalHandle;
-        handle.retire(record);
+        GlobalDefaultHandle::retire(GlobalDefaultHandle, record);
+    }
+}
+
+/********** impl GenericReclaimer *****************************************************************/
+
+unsafe impl GenericReclaimer for GlobalHP {
+    type Handle = GlobalDefaultHandle;
+
+    #[inline]
+    fn create_local_handle(&self) -> Self::Handle {
+        GlobalDefaultHandle
     }
 }
 
@@ -42,13 +51,7 @@ unsafe impl GlobalReclaimer for GlobalHP {
 
 unsafe impl Reclaimer for GlobalHP {
     type Global = Global;
-    type Header = LocalRetire::Header;
-    type Handle = GlobalHandle;
-
-    #[inline]
-    fn create_local_handle(&self) -> Self::Handle {
-        GlobalHandle
-    }
+    type Header = <LocalRetire as Policy>::Header;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -56,11 +59,11 @@ unsafe impl Reclaimer for GlobalHP {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Copy, Clone, Debug, Default)]
-pub struct GlobalHandle;
+pub struct GlobalDefaultHandle;
 
 /********** impl ReclaimerHandle ******************************************************************/
 
-impl ReclaimerHandle for GlobalHandle {
+unsafe impl ReclaimerHandle for GlobalDefaultHandle {
     type Reclaimer = GlobalHP;
     type Guard = Guard<'static, 'static, LocalRetire>;
 

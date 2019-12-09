@@ -1,4 +1,4 @@
-use crate::{Record, HP};
+use crate::{HPHandle, Record};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Policy (trait)
@@ -83,7 +83,7 @@ trait AnyNode {
     fn next(&self) -> AnyNodePtr;
 }
 
-type Record<T> = conquer_reclaim::Record<T, HP<GlobalRetire>>;
+type Record<T> = conquer_reclaim::Record<T, HPHandle<GlobalRetire>>;
 
 impl<T> AnyNode for Record<T> {
     #[inline]

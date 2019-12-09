@@ -1,6 +1,12 @@
 use core::convert::AsRef;
 
-use alloc::sync::Arc;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "std")] {
+        use std::sync::Arc;
+    } else {
+        use alloc::sync::Arc;
+    }
+}
 
 use crate::hazard::{Hazard, HazardList, ProtectStrategy};
 use crate::policy::Policy;

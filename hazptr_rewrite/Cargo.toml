@@ -9,6 +9,9 @@ default = ["std"]
 
 std = ["arrayvec/std"]
 
+[dependencies]
+cfg-if = "0.1.10"
+
 [dependencies.arrayvec]
 version = "0.5.1"
 default-features = false

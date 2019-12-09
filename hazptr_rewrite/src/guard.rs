@@ -6,7 +6,7 @@ use conquer_reclaim::{Atomic, NotEqualError, Protect, ReclaimerHandle, Shared};
 use crate::hazard::Hazard;
 use crate::local::{Local, LocalHandle};
 use crate::policy::Policy;
-use crate::HP;
+use crate::HPHandle;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Guard
@@ -54,7 +54,7 @@ impl<'local, 'global, P: Policy> Drop for Guard<'local, 'global, P> {
 /********** impl Protect **************************************************************************/
 
 unsafe impl<P: Policy> Protect for Guard<'_, '_, P> {
-    type Reclaimer = HP<P>;
+    type Reclaimer = HPHandle<P>;
 
     #[inline]
     fn release(&mut self) {
