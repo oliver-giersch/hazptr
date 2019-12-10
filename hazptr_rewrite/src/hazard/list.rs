@@ -1,18 +1,28 @@
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use conquer_util::align::CacheAligned;
-
-use crate::hazard::{Hazard, ProtectStrategy, Protected, FREE, THREAD_RESERVED};
+use crate::hazard::{Hazard, Protected, FREE, THREAD_RESERVED};
 
 // the number of elements is chosen so that 31 hazards aligned to 128-byte and
 // one likewise aligned next pointer fit into a 4096 byte memory page.
 const ELEMENTS: usize = 31;
 
+#[repr(align(128))]
+struct CacheAligned<T> {
+    aligned: T,
+}
+
+impl<T> CacheAligned<T> {
+    fn new(aligned: T) -> Self {
+        Self { aligned }
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HazardList
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug)]
 pub(crate) struct HazardList {
     head: AtomicPtr<HazardArrayNode>,
 }
@@ -51,7 +61,7 @@ impl HazardList {
                 return hazard;
             }
 
-            prev = &(*curr).next.0 as *const _;
+            prev = &(*curr).next.aligned as *const _;
             curr = (*prev).load(Ordering::Acquire);
         }
 
@@ -67,7 +77,7 @@ impl HazardList {
     ) -> &Hazard {
         let node = Box::into_raw(Box::new(HazardArrayNode::new(protected)));
         while let Err(tail_node) =
-            *tail.compare_exchange(ptr::null_mut(), node, Ordering::AcqRel, Ordering::Acquire)
+            (*tail).compare_exchange(ptr::null_mut(), node, Ordering::AcqRel, Ordering::Acquire)
         {
             // try insert in tail_node, if success return and deallocate
             if let Some(hazard) = self.try_insert_in_node(tail_node, protected, order) {
@@ -75,10 +85,10 @@ impl HazardList {
                 return hazard;
             }
 
-            tail = &(*tail_node).next;
+            tail = &(*tail_node).next.aligned;
         }
 
-        return &*node.elements[0];
+        &(*node).elements[0].aligned
     }
 
     #[inline]
@@ -89,7 +99,7 @@ impl HazardList {
         order: Ordering,
     ) -> Option<&Hazard> {
         for element in &(*node).elements[1..] {
-            let hazard = &element.0;
+            let hazard = &element.aligned;
             if hazard.protected.load(Ordering::Relaxed) == FREE {
                 if hazard
                     .protected
@@ -113,7 +123,7 @@ impl Drop for HazardList {
         let mut curr = self.head.load(Ordering::Relaxed);
         while !curr.is_null() {
             let node = unsafe { Box::from_raw(curr) };
-            curr = node.next.0.load(Ordering::Relaxed);
+            curr = node.next.aligned.load(Ordering::Relaxed);
         }
     }
 }
@@ -137,9 +147,9 @@ impl<'a> Iterator for Iter<'a> {
         // loop is executed at most twice
         while let Some(node) = self.curr {
             if self.idx < ELEMENTS {
-                return Some(&node.elements[self.idx].0);
+                return Some(&node.elements[self.idx].aligned);
             } else {
-                self.curr = unsafe { node.next.0.load(Ordering::Acquire).as_ref() };
+                self.curr = unsafe { node.next.aligned.load(Ordering::Acquire).as_ref() };
                 self.idx = 0;
             }
         }
@@ -162,9 +172,9 @@ struct HazardArrayNode {
 impl HazardArrayNode {
     #[inline]
     const fn new(protected: *const ()) -> Self {
-        let mut elements = [CacheAligned(Hazard::new()); ELEMENTS];
-        elements[0].0 = Hazard::with_protected(protected);
+        let mut elements = [CacheAligned::new(Hazard::new()); ELEMENTS];
+        elements[0].aligned = Hazard::with_protected(protected);
 
-        Self { elements, next: CacheAligned(AtomicPtr::new(ptr::null_mut())) }
+        Self { elements, next: CacheAligned::new(AtomicPtr::new(ptr::null_mut())) }
     }
 }

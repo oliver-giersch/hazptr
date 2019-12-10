@@ -48,7 +48,7 @@ impl<'global, P: Policy> AsRef<Global<P>> for GlobalHandle<'global, P> {
         match &self.inner {
             GlobalRef::Arc(global) => global.as_ref(),
             GlobalRef::Ref(global) => *global,
-            GlobalRef::Raw(global) => unsafe { &*global },
+            GlobalRef::Raw(ref global) => unsafe { &**global },
         }
     }
 }
@@ -65,6 +65,11 @@ pub struct Global<P: Policy> {
 /********** impl inherent *************************************************************************/
 
 impl<P: Policy> Global<P> {
+    #[inline]
+    pub fn new() -> Self {
+        Self { hazards: HazardList::new(), state: Default::default() }
+    }
+
     #[inline]
     pub fn get_hazard(&self, strategy: ProtectStrategy) -> &Hazard {
         match strategy {

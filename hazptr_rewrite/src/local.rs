@@ -39,7 +39,7 @@ impl<'local, 'global, P: Policy, R: Reclaimer> AsRef<Local<'global, P>>
         match &self.inner {
             LocalRef::Rc(local) => local.as_ref(),
             LocalRef::Ref(local) => local,
-            LocalRef::Raw(local) => unsafe { &*local },
+            LocalRef::Raw(local) => unsafe { &**local },
         }
     }
 }
@@ -116,7 +116,7 @@ impl<'global, P: Policy> Local<'global, P> {
     }
 
     #[inline]
-    pub fn get_hazard(&self) -> &'global Hazard {
+    pub fn get_hazard(&self) -> &Hazard {
         unsafe {
             match (*self.inner.get()).hazard_cache.pop() {
                 Some(hazard) => hazard,

@@ -2,9 +2,9 @@
 // Policy (trait)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub trait Policy {
+pub trait Policy: Sync + 'static {
     type Header: Default + Sync + Sized;
-    type GlobalState;
+    type GlobalState: Default + Send + Sync;
     type LocalState;
 }
 
@@ -53,8 +53,14 @@ impl Policy for LocalRetire {
 // AnyNodePtr
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Copy, Clone, Debug, Default, Eq, Ord, Hash, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, Eq, Ord, Hash, PartialEq, PartialOrd)]
 pub(crate) struct AnyNodePtr(*const dyn AnyNode);
+
+impl Default for AnyNodePtr {
+    fn default() -> Self {
+        unimplemented!()
+    }
+}
 
 unsafe impl Sync for AnyNodePtr {}
 
@@ -88,10 +94,15 @@ trait AnyNode {
     }
 }*/
 
-#[derive(Default)]
 #[repr(C)]
 struct Header {
     data: *mut (),
     vtable: *mut (),
     next: *mut DynNode,
+}
+
+impl Default for Header {
+    fn default() -> Self {
+        unimplemented!()
+    }
 }
