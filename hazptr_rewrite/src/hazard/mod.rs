@@ -3,7 +3,7 @@ mod list;
 use core::ptr::NonNull;
 use core::sync::atomic::AtomicPtr;
 
-pub use self::list::{HazardList, Iter};
+pub(crate) use self::list::{HazardList, Iter};
 
 const FREE: *mut () = 0 as *mut ();
 const THREAD_RESERVED: *mut () = 1 as *mut ();

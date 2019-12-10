@@ -89,7 +89,7 @@ impl<P: Policy> Default for Global<P> {
 // GlobalRef
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub(crate) enum GlobalRef<'a, P> {
+pub(crate) enum GlobalRef<'a, P: Policy> {
     Arc(Arc<Global<P>>),
     Ref(&'a Global<P>),
     Raw(*const Global<P>),

@@ -1,27 +1,27 @@
-use core::marker::PhantomData;
 use core::sync::atomic::Ordering;
 
-use conquer_reclaim::{Atomic, NotEqualError, Protect, ReclaimerHandle, Shared};
+use conquer_reclaim::conquer_pointer::{MarkedPtr, MaybeNull};
+use conquer_reclaim::typenum::Unsigned;
+use conquer_reclaim::{Atomic, NotEqualError, Protect, Reclaimer, Shared};
 
 use crate::hazard::Hazard;
-use crate::local::{Local, LocalHandle};
+use crate::local::LocalHandle;
 use crate::policy::Policy;
-use crate::HPHandle;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Guard
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct Guard<'local, 'global, P> {
+pub struct Guard<'local, 'global, P: Policy, R: Reclaimer> {
     hazard: &'global Hazard,
-    local: LocalHandle<'local, 'global, P>,
+    local: LocalHandle<'local, 'global, P, R>,
 }
 
 /********** impl inherent *************************************************************************/
 
-impl<'local, 'global, P: Policy> Guard<'local, 'global, P> {
+impl<'local, 'global, P: Policy, R: Reclaimer> Guard<'local, 'global, P, R> {
     #[inline]
-    pub fn with_handle(local: LocalHandle<'local, 'global, P>) -> Self {
+    pub fn with_handle(local: LocalHandle<'local, 'global, P, R>) -> Self {
         let hazard = local.as_ref().get_hazard();
         Self { hazard, local }
     }
@@ -29,7 +29,7 @@ impl<'local, 'global, P: Policy> Guard<'local, 'global, P> {
 
 /********** impl Clone ****************************************************************************/
 
-impl<'local, 'global, P: Policy> Clone for Guard<'local, 'global, P> {
+impl<'local, 'global, P: Policy, R: Reclaimer> Clone for Guard<'local, 'global, P, R> {
     #[inline]
     fn clone(&self) -> Self {
         unimplemented!()
@@ -44,7 +44,7 @@ impl<'local, 'global, P: Policy> Clone for Guard<'local, 'global, P> {
 
 /********** impl Drop *****************************************************************************/
 
-impl<'local, 'global, P: Policy> Drop for Guard<'local, 'global, P> {
+impl<'local, 'global, P: Policy, R: Reclaimer> Drop for Guard<'local, 'global, P, R> {
     #[inline]
     fn drop(&mut self) {
         unimplemented!()
@@ -53,8 +53,8 @@ impl<'local, 'global, P: Policy> Drop for Guard<'local, 'global, P> {
 
 /********** impl Protect **************************************************************************/
 
-unsafe impl<P: Policy> Protect for Guard<'_, '_, P> {
-    type Reclaimer = HPHandle<P>;
+unsafe impl<P: Policy, R: Reclaimer> Protect for Guard<'_, '_, P, R> {
+    type Reclaimer = R;
 
     #[inline]
     fn release(&mut self) {
@@ -67,7 +67,7 @@ unsafe impl<P: Policy> Protect for Guard<'_, '_, P> {
         &mut self,
         src: &Atomic<T, Self::Reclaimer, N>,
         order: Ordering,
-    ) -> MarkedOption<Shared<T, Self::Reclaimer, N>> {
+    ) -> MaybeNull<Shared<T, Self::Reclaimer, N>> {
         unimplemented!()
     }
 
@@ -77,7 +77,7 @@ unsafe impl<P: Policy> Protect for Guard<'_, '_, P> {
         src: &Atomic<T, Self::Reclaimer, N>,
         expected: MarkedPtr<T, N>,
         order: Ordering,
-    ) -> Result<MarkedOption<Shared<T, Self::Reclaimer, N>>, NotEqualError> {
+    ) -> Result<MaybeNull<Shared<T, Self::Reclaimer, N>>, NotEqualError> {
         unimplemented!()
     }
 }

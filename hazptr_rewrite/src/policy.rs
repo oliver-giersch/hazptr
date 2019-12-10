@@ -1,5 +1,3 @@
-use crate::{HPHandle, Record};
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Policy (trait)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -83,14 +81,12 @@ trait AnyNode {
     fn next(&self) -> AnyNodePtr;
 }
 
-type Record<T> = conquer_reclaim::Record<T, HPHandle<GlobalRetire>>;
-
-impl<T> AnyNode for Record<T> {
+/*impl<T> AnyNode for Record<T> {
     #[inline]
     fn next(&self) -> AnyNodePtr {
         *self.header()
     }
-}
+}*/
 
 #[derive(Default)]
 #[repr(C)]

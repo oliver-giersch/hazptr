@@ -3,7 +3,9 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+#[cfg(feature = "std")]
 mod default;
+
 mod global;
 mod guard;
 mod hazard;
@@ -11,15 +13,18 @@ mod local;
 mod policy;
 mod queue;
 
-#[cfg(not(feature = "std"))]
-use alloc::sync::Arc;
-#[cfg(feature = "std")]
-use std::sync::Arc;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "std")] {
+        use std::sync::Arc;
+    } else {
+        use alloc::sync::Arc;
+    }
+}
 
-use conquer_reclaim::{GenericReclaimer, Reclaimer, Record};
+use conquer_reclaim::{GenericReclaimer, Reclaimer};
 
 use crate::global::{Global, GlobalHandle};
-use crate::local::LocalHandle;
+use crate::local::{Local, LocalHandle};
 use crate::policy::Policy;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -30,10 +35,17 @@ pub struct HPHandle<P> {
     handle: Arc<HP<P>>,
 }
 
+impl<P> Default for HPHandle<P> {
+    #[inline]
+    fn default() -> Self {
+        Arc::new(HP { global: Global::default() })
+    }
+}
+
 /********** impl GenericReclaimer *****************************************************************/
 
 unsafe impl<P: Policy> GenericReclaimer for HPHandle<P> {
-    type Handle = LocalHandle<'static, 'static, P>;
+    type Handle = LocalHandle<'static, 'static, P, Self>;
 
     #[inline]
     fn create_local_handle(&self) -> Self::Handle {
@@ -54,6 +66,15 @@ unsafe impl<P: Policy> Reclaimer for HPHandle<P> {
 
 pub struct HP<P> {
     global: Global<P>,
+}
+
+/********** impl inherent *************************************************************************/
+
+impl<P: Policy> HP<P> {
+    #[inline]
+    pub fn create_local_handle<'global>(&'global self) -> LocalHandle<'static, 'global, P, Self> {
+        LocalHandle::from_owned(Local::new(GlobalHandle::from_ref(self)))
+    }
 }
 
 /********** impl Reclaimer ************************************************************************/

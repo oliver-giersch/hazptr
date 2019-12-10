@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
-use conquer_once::Lazy;
+// FIXME: use non-spin variant
+use conquer_once::spin::Lazy;
 use conquer_reclaim::{GenericReclaimer, GlobalReclaimer, Reclaimer, ReclaimerHandle, Retired};
 
 use crate::global::GlobalHandle;
@@ -20,6 +21,7 @@ thread_local!(static LOCAL: Rc<Local> = Local::new(GlobalHandle::from_ref(&*GLOB
 // GlobalHP
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Default)]
 pub struct GlobalHP;
 
 /********** impl GlobalReclaimer ******************************************************************/
@@ -65,7 +67,7 @@ pub struct GlobalDefaultHandle;
 
 unsafe impl ReclaimerHandle for GlobalDefaultHandle {
     type Reclaimer = GlobalHP;
-    type Guard = Guard<'static, 'static, LocalRetire>;
+    type Guard = Guard<'static, 'static, LocalRetire, GlobalHP>;
 
     #[inline]
     fn guard(self) -> Self::Guard {

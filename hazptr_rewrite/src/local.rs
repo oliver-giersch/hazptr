@@ -1,38 +1,39 @@
 use core::cell::UnsafeCell;
 use core::convert::AsRef;
+use core::marker::PhantomData;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
         use std::rc::Rc;
-        use std::sync::Arc;
         use std::vec::Vec;
     } else {
         use alloc::rc::Rc;
-        use alloc::sync::Arc;
         use alloc::vec::Vec;
     }
 }
 
 use arrayvec::ArrayVec;
-use conquer_reclaim::{ReclaimerHandle, Retired};
+use conquer_reclaim::{Reclaimer, ReclaimerHandle, Retired};
 
-use crate::global::{Global, GlobalHandle};
+use crate::global::GlobalHandle;
 use crate::guard::Guard;
 use crate::hazard::{Hazard, Protected};
 use crate::policy::Policy;
-use crate::HPHandle;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // LocalHandle
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct LocalHandle<'local, 'global, P: Policy> {
+pub struct LocalHandle<'local, 'global, P: Policy, R: Reclaimer> {
     inner: LocalRef<'local, 'global, P>,
+    _marker: PhantomData<R>,
 }
 
 /*********** impl AsRef ***************************************************************************/
 
-impl<'local, 'global, P: Policy> AsRef<Local<'global, P>> for LocalHandle<'local, 'global, P> {
+impl<'local, 'global, P: Policy, R: Reclaimer> AsRef<Local<'global, P>>
+    for LocalHandle<'local, 'global, P, R>
+{
     #[inline]
     fn as_ref(&self) -> &Local<'global, P> {
         match &self.inner {
@@ -45,44 +46,46 @@ impl<'local, 'global, P: Policy> AsRef<Local<'global, P>> for LocalHandle<'local
 
 /*********** impl Clone ***************************************************************************/
 
-impl<'local, 'global, P: Policy> Clone for LocalHandle<'local, 'global, P> {
+impl<'local, 'global, P: Policy, R: Reclaimer> Clone for LocalHandle<'local, 'global, P, R> {
     #[inline]
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self { inner: self.inner.clone(), _marker: PhantomData }
     }
 }
 
 /********** impl inherent *************************************************************************/
 
-impl<'global, P: Policy> LocalHandle<'static, 'global, P> {
+impl<'global, P: Policy, R: Reclaimer> LocalHandle<'static, 'global, P, R> {
     #[inline]
     pub fn owning(global: GlobalHandle<'global, P>) -> Self {
-        Self { inner: LocalRef::Rc(Rc::new(Local::new(global))) }
+        Self { inner: LocalRef::Rc(Rc::new(Local::new(global))), _marker: PhantomData }
     }
 
     #[inline]
     pub fn from_owned(local: Rc<Local<'global, P>>) -> Self {
-        Self { inner: LocalRef::Rc(local) }
+        Self { inner: LocalRef::Rc(local), _marker: PhantomData }
     }
 
     #[inline]
     pub unsafe fn from_raw(local: *const Local<'global, P>) -> Self {
-        Self { inner: LocalRef::Raw(local) }
+        Self { inner: LocalRef::Raw(local), _marker: PhantomData }
     }
 }
 
-impl<'local, 'global, P: Policy> LocalHandle<'local, 'global, P> {
+impl<'local, 'global, P: Policy, R: Reclaimer> LocalHandle<'local, 'global, P, R> {
     #[inline]
     pub fn from_ref(local: &'local Local<'global, P>) -> Self {
-        Self { inner: LocalRef::Ref(local) }
+        Self { inner: LocalRef::Ref(local), _marker: PhantomData }
     }
 }
 
 /********** impl ReclaimerHandle ******************************************************************/
 
-unsafe impl<'local, 'global, P: Policy> ReclaimerHandle for LocalHandle<'local, 'global, P> {
-    type Reclaimer = HPHandle<P>;
-    type Guard = Guard<'local, 'global, P>;
+unsafe impl<'local, 'global, P: Policy, R: Reclaimer> ReclaimerHandle
+    for LocalHandle<'local, 'global, P, R>
+{
+    type Reclaimer = R;
+    type Guard = Guard<'local, 'global, P, R>;
 
     #[inline]
     fn guard(self) -> Self::Guard {
@@ -117,7 +120,9 @@ impl<'global, P: Policy> Local<'global, P> {
         unsafe {
             match (*self.inner.get()).hazard_cache.pop() {
                 Some(hazard) => hazard,
-                None => self.global.as_ref().get_hazard(),
+                None => {
+                    self.global.as_ref().get_hazard(crate::hazard::ProtectStrategy::ReserveOnly)
+                } // FIXME: import
             }
         }
     }
@@ -126,6 +131,8 @@ impl<'global, P: Policy> Local<'global, P> {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // LocalInner
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const HAZARD_CACHE: usize = 16;
 
 struct LocalInner<'global, P: Policy> {
     state: P::LocalState,

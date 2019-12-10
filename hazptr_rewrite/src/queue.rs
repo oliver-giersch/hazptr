@@ -33,7 +33,7 @@ impl<N: RawNode> RawQueue<N> {
     pub unsafe fn push(&self, node: NonNull<N>) {
         // eg. N = dyn AnyNode, N = RetiredBag
         // Node::into_thin_ptr(node) [*mut RetiredBag -> *mut RetiredBag, *mut dyn AnyNode -> *mut DynAnyNode]
-        loop {
+        /*loop {
             let head = self.head.load(Ordering::Relaxed);
             leaked.set_next(head);
 
@@ -44,7 +44,9 @@ impl<N: RawNode> RawQueue<N> {
             {
                 return;
             }
-        }
+        }*/
+
+        unimplemented!()
     }
 
     #[inline]
