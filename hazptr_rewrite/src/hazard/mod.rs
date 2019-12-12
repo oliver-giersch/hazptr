@@ -1,7 +1,7 @@
 mod list;
 
 use core::ptr::NonNull;
-use core::sync::atomic::AtomicPtr;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 pub(crate) use self::list::HazardList;
 
@@ -14,7 +14,7 @@ const THREAD_RESERVED: *mut () = 1 as *mut ();
 
 /// A pointer visible to all threads that is protected from reclamation.
 #[derive(Debug)]
-pub struct Hazard {
+pub(crate) struct Hazard {
     protected: AtomicPtr<()>,
 }
 
@@ -29,6 +29,30 @@ impl Hazard {
     #[inline]
     pub const fn with_protected(protected: *const ()) -> Self {
         Self { protected: AtomicPtr::new(protected as *mut _) }
+    }
+
+    #[inline]
+    pub fn set_free(&self, order: Ordering) {
+        self.protected.store(FREE, order);
+    }
+
+    #[inline]
+    pub fn set_thread_reserved(&self, order: Ordering) {
+        self.protected.store(THREAD_RESERVED, order);
+    }
+
+    #[inline]
+    pub fn protected(&self, order: Ordering) -> Option<Protected> {
+        match NonNull::new(self.protected.load(order)) {
+            Some(ptr) if ptr.as_ptr() != THREAD_RESERVED => Some(Protected(ptr)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn set_protected(&self, protected: NonNull<()>, order: Ordering) {
+        assert_eq!(order, Ordering::SeqCst, "this method must be sequentially consistent");
+        self.protected.store(protected.as_ptr(), order);
     }
 }
 

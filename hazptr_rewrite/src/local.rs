@@ -1,6 +1,7 @@
 use core::cell::UnsafeCell;
 use core::convert::AsRef;
 use core::marker::PhantomData;
+use core::sync::atomic::Ordering;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
@@ -12,12 +13,12 @@ cfg_if::cfg_if! {
     }
 }
 
-use arrayvec::ArrayVec;
+use arrayvec::{ArrayVec, CapacityError};
 use conquer_reclaim::{Reclaimer, ReclaimerHandle, Retired};
 
 use crate::global::GlobalHandle;
 use crate::guard::Guard;
-use crate::hazard::{Hazard, Protected};
+use crate::hazard::{Hazard, ProtectStrategy, Protected};
 use crate::policy::Policy;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -118,15 +119,25 @@ impl<'global, P: Policy> Local<'global, P> {
     }
 
     #[inline]
-    pub fn get_hazard(&self) -> &Hazard {
-        unsafe {
-            match (*self.inner.get()).hazard_cache.pop() {
-                Some(hazard) => hazard,
-                None => {
-                    self.global.as_ref().get_hazard(crate::hazard::ProtectStrategy::ReserveOnly)
-                } // FIXME: import
+    pub fn get_hazard(&self, strategy: ProtectStrategy) -> &Hazard {
+        match unsafe { (*self.inner.get()).hazard_cache.pop() } {
+            Some(hazard) => {
+                if let ProtectStrategy::Protect(protected) = strategy {
+                    hazard.set_protected(protected.into_inner(), Ordering::SeqCst);
+                }
+
+                hazard
             }
+            None => self.global.as_ref().get_hazard(strategy),
         }
+    }
+
+    #[inline]
+    pub fn try_recycle_hazard(&self, hazard: &'global Hazard) -> Result<(), RecycleError> {
+        unsafe { *(self.inner.get()) }.hazard_cache.try_push(hazard)?;
+        hazard.set_thread_reserved(Ordering::Release);
+
+        Ok(())
     }
 }
 
@@ -165,5 +176,22 @@ impl<'local, 'global, P: Policy> Clone for LocalRef<'local, 'global, P> {
             LocalRef::Ref(local) => LocalRef::Ref(*local),
             LocalRef::Raw(local) => LocalRef::Raw(*local),
         }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RecycleError
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Error type for thread local recycle operations.
+#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct RecycleError;
+
+/********** impl From *****************************************************************************/
+
+impl From<CapacityError<&'_ Hazard>> for RecycleError {
+    #[inline]
+    fn from(_: CapacityError<&Hazard>) -> Self {
+        RecycleError
     }
 }
