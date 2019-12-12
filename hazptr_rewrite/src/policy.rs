@@ -1,17 +1,20 @@
+use core::fmt::Debug;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Policy (trait)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub trait Policy: Sync + 'static {
+pub trait Policy: Debug + Sync + 'static {
     type Header: Default + Sync + Sized;
-    type GlobalState: Default + Send + Sync;
-    type LocalState;
+    type GlobalState: Debug + Default + Send + Sync;
+    type LocalState: Debug;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // GlobalRetire
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug)]
 pub struct GlobalRetire;
 
 /********** impl Policy ***************************************************************************/
@@ -26,6 +29,7 @@ impl Policy for GlobalRetire {
 // LocalRetire
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug)]
 pub struct LocalRetire;
 
 /********** impl Policy ***************************************************************************/
@@ -55,6 +59,8 @@ impl Policy for LocalRetire {
 
 #[derive(Copy, Clone, Debug, Eq, Ord, Hash, PartialEq, PartialOrd)]
 pub(crate) struct AnyNodePtr(*const dyn AnyNode);
+
+/********** impl Default **************************************************************************/
 
 impl Default for AnyNodePtr {
     fn default() -> Self {

@@ -55,7 +55,7 @@ impl<'local, 'global, P: Policy, R: Reclaimer> Clone for LocalHandle<'local, 'gl
 
 /********** impl inherent *************************************************************************/
 
-impl<'global, P: Policy, R: Reclaimer> LocalHandle<'static, 'global, P, R> {
+impl<'global, P: Policy, R: Reclaimer> LocalHandle<'_, 'global, P, R> {
     #[inline]
     pub fn owning(global: GlobalHandle<'global, P>) -> Self {
         Self { inner: LocalRef::Rc(Rc::new(Local::new(global))), _marker: PhantomData }

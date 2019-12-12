@@ -21,7 +21,7 @@ pub struct GlobalHandle<'global, P: Policy> {
 
 /********** impl inherent *************************************************************************/
 
-impl<P: Policy> GlobalHandle<'static, P> {
+impl<P: Policy> GlobalHandle<'_, P> {
     #[inline]
     pub fn from_owned(global: Arc<Global<P>>) -> Self {
         Self { inner: GlobalRef::Arc(global) }
@@ -57,6 +57,7 @@ impl<'global, P: Policy> AsRef<Global<P>> for GlobalHandle<'global, P> {
 // Global
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug)]
 pub struct Global<P: Policy> {
     hazards: HazardList,
     state: P::GlobalState,

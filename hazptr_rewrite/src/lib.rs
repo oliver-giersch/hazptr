@@ -33,11 +33,23 @@ use crate::policy::Policy;
 // HPHandle
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct HPHandle<P: Policy> {
+#[derive(Debug)]
+pub struct ArcHP<P: Policy> {
     handle: Arc<Global<P>>,
 }
 
-impl<P: Policy> Default for HPHandle<P> {
+/********** impl inherent *************************************************************************/
+
+impl<P: Policy> ArcHP<P> {
+    #[inline]
+    pub fn owning_local_handle(&self) -> LocalHandle<'_, '_, P, Self> {
+        LocalHandle::owning(GlobalHandle::from_owned(Arc::clone(&self.handle)))
+    }
+}
+
+/********** impl Default **************************************************************************/
+
+impl<P: Policy> Default for ArcHP<P> {
     #[inline]
     fn default() -> Self {
         Self { handle: Arc::new(Global::default()) }
@@ -46,26 +58,32 @@ impl<P: Policy> Default for HPHandle<P> {
 
 /********** impl GenericReclaimer *****************************************************************/
 
-unsafe impl<P: Policy> GenericReclaimer for HPHandle<P> {
+unsafe impl<P: Policy> GenericReclaimer for ArcHP<P> {
     type Handle = LocalHandle<'static, 'static, P, Self>;
 
     #[inline]
-    fn create_local_handle(&self) -> Self::Handle {
+    fn local_handle(&self) -> Self::Handle {
         LocalHandle::owning(GlobalHandle::from_owned(Arc::clone(&self.handle)))
     }
 }
 
 /********** impl Reclaimer ************************************************************************/
 
-unsafe impl<P: Policy> Reclaimer for HPHandle<P> {
+unsafe impl<P: Policy> Reclaimer for ArcHP<P> {
     type Global = Global<P>;
     type Header = P::Header;
+
+    #[inline]
+    fn new() -> Self {
+        ArcHP::default()
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HP
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug)]
 pub struct HP<P: Policy> {
     global: Global<P>,
 }
@@ -79,8 +97,22 @@ impl<P: Policy> HP<P> {
     }
 
     #[inline]
-    pub fn create_local_handle<'global>(&'global self) -> LocalHandle<'static, 'global, P, Self> {
+    pub fn owning_local_handle<'global>(&'global self) -> LocalHandle<'static, 'global, P, Self> {
         let local = Rc::new(Local::new(GlobalHandle::from_ref(&self.global)));
+        LocalHandle::from_owned(local)
+    }
+
+    #[inline]
+    pub fn ref_local_handle<'local, 'global>(
+        &'global self,
+        local: &'local Local<'global, P>,
+    ) -> LocalHandle<'local, 'global, P, Self> {
+        LocalHandle::from_ref(local)
+    }
+
+    #[inline]
+    pub unsafe fn raw_local_handle(&self) -> LocalHandle<'_, '_, P, Self> {
+        let local = Rc::new(Local::new(GlobalHandle::from_raw(&self.global)));
         LocalHandle::from_owned(local)
     }
 }
@@ -99,4 +131,9 @@ impl<P: Policy> Default for HP<P> {
 unsafe impl<P: Policy> Reclaimer for HP<P> {
     type Global = Global<P>;
     type Header = P::Header;
+
+    #[inline]
+    fn new() -> Self {
+        Self::default()
+    }
 }
