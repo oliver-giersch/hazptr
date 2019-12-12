@@ -29,21 +29,6 @@ pub struct LocalHandle<'local, 'global, P: Policy, R: Reclaimer> {
     _marker: PhantomData<R>,
 }
 
-/*********** impl AsRef ***************************************************************************/
-
-impl<'local, 'global, P: Policy, R: Reclaimer> AsRef<Local<'global, P>>
-    for LocalHandle<'local, 'global, P, R>
-{
-    #[inline]
-    fn as_ref(&self) -> &Local<'global, P> {
-        match &self.inner {
-            LocalRef::Rc(local) => local.as_ref(),
-            LocalRef::Ref(local) => local,
-            LocalRef::Raw(local) => unsafe { &**local },
-        }
-    }
-}
-
 /*********** impl Clone ***************************************************************************/
 
 impl<'local, 'global, P: Policy, R: Reclaimer> Clone for LocalHandle<'local, 'global, P, R> {
@@ -79,10 +64,27 @@ impl<'local, 'global, P: Policy, R: Reclaimer> LocalHandle<'local, 'global, P, R
     }
 }
 
+/*********** impl AsRef ***************************************************************************/
+
+impl<'local, 'global, P: Policy, R: Reclaimer> AsRef<Local<'global, P>>
+    for LocalHandle<'local, 'global, P, R>
+{
+    #[inline]
+    fn as_ref(&self) -> &Local<'global, P> {
+        match &self.inner {
+            LocalRef::Rc(local) => local.as_ref(),
+            LocalRef::Ref(local) => local,
+            LocalRef::Raw(local) => unsafe { &**local },
+        }
+    }
+}
+
 /********** impl ReclaimerHandle ******************************************************************/
 
-unsafe impl<'local, 'global, P: Policy, R: Reclaimer> ReclaimerHandle
-    for LocalHandle<'local, 'global, P, R>
+unsafe impl<'local, 'global, P, R> ReclaimerHandle for LocalHandle<'local, 'global, P, R>
+where
+    P: Policy,
+    R: Reclaimer,
 {
     type Reclaimer = R;
     type Guard = Guard<'local, 'global, P, R>;

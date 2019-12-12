@@ -13,7 +13,7 @@ use crate::policy::Policy;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub struct Guard<'local, 'global, P: Policy, R: Reclaimer> {
-    hazard: &'local Hazard,
+    hazard: *const Hazard,
     local: LocalHandle<'local, 'global, P, R>,
 }
 

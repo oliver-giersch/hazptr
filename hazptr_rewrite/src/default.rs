@@ -15,18 +15,23 @@ type Global = crate::global::Global<LocalRetire>;
 /********** global & thread-local *****************************************************************/
 
 static GLOBAL: Lazy<Global> = Lazy::new(Global::default);
-thread_local!(static LOCAL: Rc<Local> = Local::new(GlobalHandle::from_ref(&*GLOBAL)));
+thread_local!(static LOCAL: Rc<Local> = Rc::new(Local::new(GlobalHandle::from_ref(&*GLOBAL))));
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // GlobalHP
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct GlobalHP;
 
 /********** impl GlobalReclaimer ******************************************************************/
 
 unsafe impl GlobalReclaimer for GlobalHP {
+    #[inline]
+    fn handle() -> Self::Handle {
+        GlobalDefaultHandle
+    }
+
     #[inline]
     fn guard() -> <Self::Handle as ReclaimerHandle>::Guard {
         GlobalDefaultHandle::guard(GlobalDefaultHandle)
@@ -44,7 +49,7 @@ unsafe impl GenericReclaimer for GlobalHP {
     type Handle = GlobalDefaultHandle;
 
     #[inline]
-    fn create_local_handle(&self) -> Self::Handle {
+    fn local_handle(&self) -> Self::Handle {
         GlobalDefaultHandle
     }
 }
@@ -54,6 +59,11 @@ unsafe impl GenericReclaimer for GlobalHP {
 unsafe impl Reclaimer for GlobalHP {
     type Global = Global;
     type Header = <LocalRetire as Policy>::Header;
+
+    #[inline]
+    fn new() -> Self {
+        Self::default()
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

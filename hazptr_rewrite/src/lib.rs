@@ -96,8 +96,9 @@ impl<P: Policy> HP<P> {
         Self { global: Global::new() }
     }
 
+    /// fixme: CANT MAKE NO OWNING HANDLE
     #[inline]
-    pub fn owning_local_handle<'global>(&'global self) -> LocalHandle<'static, 'global, P, Self> {
+    pub fn owning_local_handle<'global>(&'global self) -> LocalHandle<'_, 'global, P, Self> {
         let local = Rc::new(Local::new(GlobalHandle::from_ref(&self.global)));
         LocalHandle::from_owned(local)
     }
