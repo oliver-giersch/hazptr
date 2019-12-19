@@ -23,24 +23,24 @@ cfg_if::cfg_if! {
     }
 }
 
-use conquer_reclaim::{GenericReclaimer, Reclaimer};
+use conquer_reclaim::{OwningReclaimer, Reclaimer};
 
 use crate::global::{Global, GlobalHandle};
 use crate::local::{Local, LocalHandle};
 use crate::policy::Policy;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// HPHandle
+// ArcHp
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-pub struct ArcHP<P: Policy> {
+pub struct ArcHp<P: Policy> {
     handle: Arc<Global<P>>,
 }
 
 /********** impl inherent *************************************************************************/
 
-impl<P: Policy> ArcHP<P> {
+impl<P: Policy> ArcHp<P> {
     #[inline]
     pub fn owning_local_handle(&self) -> LocalHandle<'_, '_, P, Self> {
         LocalHandle::owning(GlobalHandle::from_owned(Arc::clone(&self.handle)))
@@ -49,7 +49,7 @@ impl<P: Policy> ArcHP<P> {
 
 /********** impl Default **************************************************************************/
 
-impl<P: Policy> Default for ArcHP<P> {
+impl<P: Policy> Default for ArcHp<P> {
     #[inline]
     fn default() -> Self {
         Self { handle: Arc::new(Global::default()) }
@@ -58,39 +58,39 @@ impl<P: Policy> Default for ArcHP<P> {
 
 /********** impl GenericReclaimer *****************************************************************/
 
-unsafe impl<P: Policy> GenericReclaimer for ArcHP<P> {
+unsafe impl<P: Policy> OwningReclaimer for ArcHp<P> {
     type Handle = LocalHandle<'static, 'static, P, Self>;
 
     #[inline]
-    fn local_handle(&self) -> Self::Handle {
+    fn owning_local_handle(&self) -> Self::Handle {
         LocalHandle::owning(GlobalHandle::from_owned(Arc::clone(&self.handle)))
     }
 }
 
 /********** impl Reclaimer ************************************************************************/
 
-unsafe impl<P: Policy> Reclaimer for ArcHP<P> {
+unsafe impl<P: Policy> Reclaimer for ArcHp<P> {
     type Global = Global<P>;
     type Header = P::Header;
 
     #[inline]
     fn new() -> Self {
-        ArcHP::default()
+        ArcHp::default()
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// HP
+// Hp
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-pub struct HP<P: Policy> {
+pub struct Hp<P: Policy> {
     global: Global<P>,
 }
 
 /********** impl inherent *************************************************************************/
 
-impl<P: Policy> HP<P> {
+impl<P: Policy> Hp<P> {
     #[inline]
     pub fn new() -> Self {
         Self { global: Global::new() }
@@ -120,7 +120,7 @@ impl<P: Policy> HP<P> {
 
 /********** impl Default **************************************************************************/
 
-impl<P: Policy> Default for HP<P> {
+impl<P: Policy> Default for Hp<P> {
     #[inline]
     fn default() -> Self {
         Self { global: Global::new() }
@@ -129,7 +129,7 @@ impl<P: Policy> Default for HP<P> {
 
 /********** impl Reclaimer ************************************************************************/
 
-unsafe impl<P: Policy> Reclaimer for HP<P> {
+unsafe impl<P: Policy> Reclaimer for Hp<P> {
     type Global = Global<P>;
     type Header = P::Header;
 

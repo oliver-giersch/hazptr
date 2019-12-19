@@ -1,3 +1,5 @@
+use conquer_reclaim::RawRetired;
+
 use core::fmt::Debug;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -7,7 +9,13 @@ use core::fmt::Debug;
 pub trait Policy: Debug + Sync + 'static {
     type Header: Default + Sync + Sized;
     type GlobalState: Debug + Default + Send + Sync;
-    type LocalState: Debug;
+    type LocalState: Debug + Default;
+
+    fn on_thread_exit(local: Self::LocalState, global: &Self::GlobalState);
+    unsafe fn retire(local: &mut Self::LocalState, global: &Self::GlobalState) {}
+    
+    // fn on_thread_exit(mut local: Self::LocalState, global: &Self::GlobalState);
+    // unsafe fn retire_record(local: &mut Self::LocalState, global: &Self::GlobalState, retired: RawRetired);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -23,6 +31,11 @@ impl Policy for GlobalRetire {
     type Header = AnyNodePtr;
     type GlobalState = (); // Queue<Retired>, ...
     type LocalState = ();
+
+    #[inline]
+    fn on_thread_exit(local: Self::LocalState, global: &Self::GlobalState) {
+        unimplemented!()
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -37,7 +50,12 @@ pub struct LocalRetire;
 impl Policy for LocalRetire {
     type Header = ();
     type GlobalState = (); // AbandonedBags, ...
-    type LocalState = (); // Vec<Retired>, ...
+    type LocalState = Box<Vec<RawRetired>>;
+
+    #[inline]
+    fn on_thread_exit(local: Self::LocalState, global: &Self::GlobalState) {
+        unimplemented!()
+    }
 }
 
 // Queue<DynAnyRecord>
@@ -58,7 +76,7 @@ impl Policy for LocalRetire {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Copy, Clone, Debug, Eq, Ord, Hash, PartialEq, PartialOrd)]
-pub(crate) struct AnyNodePtr(*const dyn AnyNode);
+pub struct AnyNodePtr(*const dyn AnyNode);
 
 /********** impl Default **************************************************************************/
 

@@ -59,8 +59,8 @@ impl<'global, P: Policy> AsRef<Global<P>> for GlobalHandle<'global, P> {
 
 #[derive(Debug)]
 pub struct Global<P: Policy> {
+    pub(crate) state: P::GlobalState,
     hazards: HazardList,
-    state: P::GlobalState,
 }
 
 /********** impl inherent *************************************************************************/
@@ -68,16 +68,14 @@ pub struct Global<P: Policy> {
 impl<P: Policy> Global<P> {
     #[inline]
     pub fn new() -> Self {
-        Self { hazards: HazardList::new(), state: Default::default() }
+        Self { state: Default::default(), hazards: HazardList::new() }
     }
 
     #[inline]
-    pub fn get_hazard(&self, strategy: ProtectStrategy) -> &Hazard {
+    pub(crate) fn get_hazard(&self, strategy: ProtectStrategy) -> &Hazard {
         match strategy {
             ProtectStrategy::ReserveOnly => self.hazards.get_or_insert_reserved_hazard(),
-            ProtectStrategy::Protect(protected) => {
-                self.hazards.get_or_insert_protecting_hazard(protected)
-            }
+            ProtectStrategy::Protect(protected) => self.hazards.get_or_insert_hazard(protected),
         }
     }
 }

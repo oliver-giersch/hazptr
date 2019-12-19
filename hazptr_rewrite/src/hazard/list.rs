@@ -1,22 +1,14 @@
+use core::mem::{self, MaybeUninit};
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
+
+use conquer_util::align::Aligned128 as CacheAligned;
 
 use crate::hazard::{Hazard, Protected, FREE, THREAD_RESERVED};
 
 // the number of elements is chosen so that 31 hazards aligned to 128-byte and
 // one likewise aligned next pointer fit into a 4096 byte memory page.
 const ELEMENTS: usize = 31;
-
-#[repr(align(128))]
-struct CacheAligned<T> {
-    aligned: T,
-}
-
-impl<T> CacheAligned<T> {
-    fn new(aligned: T) -> Self {
-        Self { aligned }
-    }
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HazardList
@@ -43,7 +35,7 @@ impl HazardList {
 
     #[cold]
     #[inline(never)]
-    pub fn get_or_insert_protecting_hazard(&self, protected: Protected) -> &Hazard {
+    pub fn get_or_insert_hazard(&self, protected: Protected) -> &Hazard {
         unsafe { self.get_or_insert_unchecked(protected.as_const_ptr(), Ordering::SeqCst) }
     }
 
@@ -171,10 +163,20 @@ struct HazardArrayNode {
 
 impl HazardArrayNode {
     #[inline]
-    const fn new(protected: *const ()) -> Self {
-        let mut elements = [CacheAligned::new(Hazard::new()); ELEMENTS];
-        elements[0].aligned = Hazard::with_protected(protected);
+    fn new(protected: *const ()) -> Self {
+        let mut elements: [MaybeUninit<CacheAligned<Hazard>>; ELEMENTS] =
+            unsafe { MaybeUninit::uninit().assume_init() };
 
-        Self { elements, next: CacheAligned::new(AtomicPtr::new(ptr::null_mut())) }
+        elements[0] = MaybeUninit::new(CacheAligned::new(Hazard::with_protected(protected)));
+        for elem in &mut elements[1..] {
+            *elem = MaybeUninit::new(CacheAligned::new(Hazard::new()));
+        }
+
+        unsafe {
+            Self {
+                elements: mem::transmute(elements),
+                next: CacheAligned::new(AtomicPtr::default()),
+            }
+        }
     }
 }

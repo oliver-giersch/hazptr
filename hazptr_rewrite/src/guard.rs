@@ -16,7 +16,11 @@ use crate::policy::Policy;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub struct Guard<'local, 'global, P: Policy, R: Reclaimer> {
+    /// Hazards are borrowed through the local handle from global state, so they
+    /// act like `'global` references.
     hazard: *const Hazard,
+    /// Each guard contains an e.g. reference-counted local handle which is
+    /// accessed when a guard is cloned or dropped.
     local: LocalHandle<'local, 'global, P, R>,
 }
 
@@ -83,20 +87,20 @@ unsafe impl<P: Policy, R: Reclaimer> Protect for Guard<'_, '_, P, R> {
 
     #[inline]
     fn release(&mut self) {
-        unsafe { (*self.hazard) }.set_thread_reserved(Ordering::Release);
+        unsafe { (*self.hazard).set_thread_reserved(Ordering::Release) };
     }
 
     #[inline]
-    fn protect<T, N: Unsigned>(
+    fn protect<T, N: Unsigned + 'static>(
         &mut self,
         src: &Atomic<T, Self::Reclaimer, N>,
         order: Ordering,
     ) -> MaybeNull<Shared<T, Self::Reclaimer, N>> {
         match MaybeNull::from(src.load_raw(Ordering::Relaxed)) {
-            Null(tag) => return release!(self, tag),
+            Null(tag) => release!(self, tag),
             NotNull(ptr) => {
                 let mut protect = ptr.decompose_non_null();
-                unsafe { *self.hazard }.set_protected(protect.cast(), Ordering::SeqCst);
+                unsafe { (*self.hazard).set_protected(protect.cast(), Ordering::SeqCst) };
 
                 loop {
                     match MaybeNull::from(src.load_raw(order)) {
@@ -107,7 +111,7 @@ unsafe impl<P: Policy, R: Reclaimer> Protect for Guard<'_, '_, P, R> {
                                 return NotNull(unsafe { Shared::from_marked_non_null(ptr) });
                             }
 
-                            unsafe { *self.hazard }.set_protected(temp.cast(), Ordering::SeqCst);
+                            unsafe { (*self.hazard).set_protected(temp.cast(), Ordering::SeqCst) };
                             protect = temp;
                         }
                     }
@@ -117,12 +121,30 @@ unsafe impl<P: Policy, R: Reclaimer> Protect for Guard<'_, '_, P, R> {
     }
 
     #[inline]
-    fn protect_if_equal<T, N: Unsigned>(
+    fn protect_if_equal<T, N: Unsigned + 'static>(
         &mut self,
         src: &Atomic<T, Self::Reclaimer, N>,
         expected: MarkedPtr<T, N>,
         order: Ordering,
     ) -> Result<MaybeNull<Shared<T, Self::Reclaimer, N>>, NotEqualError> {
-        unimplemented!()
+        let raw = src.load_raw(order);
+        if raw != expected {
+            return Err(NotEqualError);
+        }
+
+        match MaybeNull::from(raw) {
+            Null(tag) => Ok(release!(self, tag)),
+            NotNull(ptr) => {
+                let protect = ptr.decompose_non_null().cast();
+                unsafe { (*self.hazard).set_protected(protect, Ordering::SeqCst) };
+
+                if src.load_raw(order) == ptr.into_marked_ptr() {
+                    Ok(NotNull(unsafe { Shared::from_marked_non_null(ptr) }))
+                } else {
+                    unsafe { (*self.hazard).set_thread_reserved(Ordering::Release) };
+                    Err(NotEqualError)
+                }
+            }
+        }
     }
 }

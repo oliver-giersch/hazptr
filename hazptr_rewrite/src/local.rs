@@ -1,6 +1,8 @@
 use core::cell::UnsafeCell;
 use core::convert::AsRef;
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
+use core::ptr;
 use core::sync::atomic::Ordering;
 
 cfg_if::cfg_if! {
@@ -14,7 +16,7 @@ cfg_if::cfg_if! {
 }
 
 use arrayvec::{ArrayVec, CapacityError};
-use conquer_reclaim::{Reclaimer, ReclaimerHandle, Retired};
+use conquer_reclaim::{RawRetired, Reclaimer, ReclaimerHandle, Retired};
 
 use crate::global::GlobalHandle;
 use crate::guard::Guard;
@@ -97,7 +99,7 @@ where
 
     #[inline]
     unsafe fn retire(self, record: Retired<Self::Reclaimer>) {
-        unimplemented!()
+        self.as_ref().retire(record.into_raw())
     }
 }
 
@@ -107,7 +109,6 @@ where
 
 pub struct Local<'global, P: Policy> {
     inner: UnsafeCell<LocalInner<'global, P>>,
-    global: GlobalHandle<'global, P>,
 }
 
 /********** impl inherent *************************************************************************/
@@ -115,12 +116,66 @@ pub struct Local<'global, P: Policy> {
 impl<'global, P: Policy> Local<'global, P> {
     #[inline]
     pub fn new(global: GlobalHandle<'global, P>) -> Self {
-        Self { inner: UnsafeCell::new(unimplemented!()), global }
+        Self { inner: UnsafeCell::new(LocalInner::new(global)) }
     }
 
     #[inline]
-    pub fn get_hazard(&self, strategy: ProtectStrategy) -> &Hazard {
-        match unsafe { (*self.inner.get()).hazard_cache.pop() } {
+    pub(crate) fn retire(&self, retired: RawRetired) {
+        unsafe { (*self.inner.get()).retire(retired) };
+    }
+
+    #[inline]
+    pub(crate) fn get_hazard(&self, strategy: ProtectStrategy) -> &Hazard {
+        unsafe { (*self.inner.get()).get_hazard(strategy) }
+    }
+
+    #[inline]
+    pub(crate) fn try_recycle_hazard(&self, hazard: &'global Hazard) -> Result<(), RecycleError> {
+        unsafe { (*self.inner.get()).try_recycle_hazard(hazard) }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// LocalInner
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const HAZARD_CACHE: usize = 16;
+
+struct LocalInner<'global, P: Policy> {
+    global: GlobalHandle<'global, P>,
+    // config: ???, how to count, thresholds, etc
+    state: ManuallyDrop<P::LocalState>,
+    flush_count: u32,
+    ops_count: u32,
+    hazard_cache: ArrayVec<[&'global Hazard; HAZARD_CACHE]>,
+    scan_cache: Vec<Protected>,
+}
+
+/********** impl inherent *************************************************************************/
+
+impl<'global, P: Policy> LocalInner<'global, P> {
+    #[inline]
+    fn new(global: GlobalHandle<'global, P>) -> Self {
+        Self {
+            global,
+            state: Default::default(),
+            flush_count: Default::default(),
+            ops_count: Default::default(),
+            hazard_cache: Default::default(),
+            scan_cache: Default::default(),
+        }
+    }
+
+    #[inline]
+    fn retire(&mut self, retired: RawRetired) {
+        unsafe { P::retire(&mut *self.state, &self.global.as_ref().state) };
+        // FIXME: increase op count conditionally
+        unimplemented!()
+    }
+
+    #[inline]
+    fn get_hazard(&mut self, strategy: ProtectStrategy) -> &Hazard {
+        match self.hazard_cache.pop() {
             Some(hazard) => {
                 if let ProtectStrategy::Protect(protected) = strategy {
                     hazard.set_protected(protected.into_inner(), Ordering::SeqCst);
@@ -133,27 +188,24 @@ impl<'global, P: Policy> Local<'global, P> {
     }
 
     #[inline]
-    pub fn try_recycle_hazard(&self, hazard: &'global Hazard) -> Result<(), RecycleError> {
-        unsafe { *(self.inner.get()) }.hazard_cache.try_push(hazard)?;
+    fn try_recycle_hazard(&mut self, hazard: &'global Hazard) -> Result<(), RecycleError> {
+        self.hazard_cache.try_push(hazard)?;
         hazard.set_thread_reserved(Ordering::Release);
 
         Ok(())
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// LocalInner
-////////////////////////////////////////////////////////////////////////////////////////////////////
+/********** impl Drop *****************************************************************************/
 
-const HAZARD_CACHE: usize = 16;
-
-struct LocalInner<'global, P: Policy> {
-    state: P::LocalState,
-    // config: ???, how to count, thresholds, etc
-    ops_count: u32,
-    flush_count: u32,
-    hazard_cache: ArrayVec<[&'global Hazard; HAZARD_CACHE]>,
-    scan_cache: Vec<Protected>,
+impl<P: Policy> Drop for LocalInner<'_, P> {
+    #[inline(never)]
+    fn drop(&mut self) {
+        let local_state = unsafe { ptr::read(&*self.state) };
+        P::on_thread_exit(local_state, &self.global.as_ref().state);
+        // P::on_thread_exit(local_state, ...);
+        unimplemented!()
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

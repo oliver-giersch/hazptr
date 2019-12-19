@@ -1,8 +1,7 @@
 use std::rc::Rc;
 
-// FIXME: use non-spin variant
-use conquer_once::spin::Lazy;
-use conquer_reclaim::{GenericReclaimer, GlobalReclaimer, Reclaimer, ReclaimerHandle, Retired};
+use conquer_once::Lazy;
+use conquer_reclaim::{GlobalReclaimer, OwningReclaimer, Reclaimer, ReclaimerHandle, Retired};
 
 use crate::global::GlobalHandle;
 use crate::guard::Guard;
@@ -22,11 +21,11 @@ thread_local!(static LOCAL: Rc<Local> = Rc::new(Local::new(GlobalHandle::from_re
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Default)]
-pub struct GlobalHP;
+pub struct GlobalHp;
 
 /********** impl GlobalReclaimer ******************************************************************/
 
-unsafe impl GlobalReclaimer for GlobalHP {
+unsafe impl GlobalReclaimer for GlobalHp {
     #[inline]
     fn handle() -> Self::Handle {
         GlobalDefaultHandle
@@ -43,20 +42,20 @@ unsafe impl GlobalReclaimer for GlobalHP {
     }
 }
 
-/********** impl GenericReclaimer *****************************************************************/
+/********** impl OwningReclaimer ******************************************************************/
 
-unsafe impl GenericReclaimer for GlobalHP {
+unsafe impl OwningReclaimer for GlobalHp {
     type Handle = GlobalDefaultHandle;
 
     #[inline]
-    fn local_handle(&self) -> Self::Handle {
+    fn owning_local_handle(&self) -> Self::Handle {
         GlobalDefaultHandle
     }
 }
 
 /********** impl Reclaimer ************************************************************************/
 
-unsafe impl Reclaimer for GlobalHP {
+unsafe impl Reclaimer for GlobalHp {
     type Global = Global;
     type Header = <LocalRetire as Policy>::Header;
 
@@ -76,8 +75,8 @@ pub struct GlobalDefaultHandle;
 /********** impl ReclaimerHandle ******************************************************************/
 
 unsafe impl ReclaimerHandle for GlobalDefaultHandle {
-    type Reclaimer = GlobalHP;
-    type Guard = Guard<'static, 'static, LocalRetire, GlobalHP>;
+    type Reclaimer = GlobalHp;
+    type Guard = Guard<'static, 'static, LocalRetire, GlobalHp>;
 
     #[inline]
     fn guard(self) -> Self::Guard {
