@@ -5,9 +5,10 @@ use conquer_reclaim::conquer_pointer::{
     MaybeNull::{self, NotNull, Null},
 };
 use conquer_reclaim::typenum::Unsigned;
-use conquer_reclaim::{Atomic, NotEqualError, Protect, Reclaimer, Shared};
+use conquer_reclaim::{Atomic, NotEqualError, Protect, Reclaim, Shared};
 
-use crate::hazard::{Hazard, ProtectStrategy};
+use crate::config::Operation;
+use crate::hazard::{HazardPtr, ProtectStrategy};
 use crate::local::LocalHandle;
 use crate::policy::Policy;
 
@@ -15,10 +16,10 @@ use crate::policy::Policy;
 // Guard
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct Guard<'local, 'global, P: Policy, R: Reclaimer> {
+pub struct Guard<'local, 'global, P: Policy, R: Reclaim> {
     /// Hazards are borrowed through the local handle from global state, so they
     /// act like `'global` references.
-    hazard: *const Hazard,
+    hazard: *const HazardPtr,
     /// Each guard contains an e.g. reference-counted local handle which is
     /// accessed when a guard is cloned or dropped.
     local: LocalHandle<'local, 'global, P, R>,
@@ -26,7 +27,7 @@ pub struct Guard<'local, 'global, P: Policy, R: Reclaimer> {
 
 /********** impl Clone ****************************************************************************/
 
-impl<'local, 'global, P: Policy, R: Reclaimer> Clone for Guard<'local, 'global, P, R> {
+impl<'local, 'global, P: Policy, R: Reclaim> Clone for Guard<'local, 'global, P, R> {
     #[inline]
     fn clone(&self) -> Self {
         let local = self.local.clone();
@@ -52,7 +53,7 @@ impl<'local, 'global, P: Policy, R: Reclaimer> Clone for Guard<'local, 'global, 
 
 /********** impl inherent *************************************************************************/
 
-impl<'local, 'global, P: Policy, R: Reclaimer> Guard<'local, 'global, P, R> {
+impl<'local, 'global, P: Policy, R: Reclaim> Guard<'local, 'global, P, R> {
     #[inline]
     pub fn with_handle(local: LocalHandle<'local, 'global, P, R>) -> Self {
         let hazard = local.as_ref().get_hazard(ProtectStrategy::ReserveOnly);
@@ -62,12 +63,13 @@ impl<'local, 'global, P: Policy, R: Reclaimer> Guard<'local, 'global, P, R> {
 
 /********** impl Drop *****************************************************************************/
 
-impl<'local, 'global, P: Policy, R: Reclaimer> Drop for Guard<'local, 'global, P, R> {
+impl<'local, 'global, P: Policy, R: Reclaim> Drop for Guard<'local, 'global, P, R> {
     #[inline]
     fn drop(&mut self) {
-        // TODO: increase count, perhaps based on self.local.as_ref().config ?
+        let local = self.local.as_ref();
+        local.try_increase_ops_count(Operation::Release);
         let hazard = unsafe { &*self.hazard };
-        if self.local.as_ref().try_recycle_hazard(hazard).is_err() {
+        if local.try_recycle_hazard(hazard).is_err() {
             hazard.set_free(Ordering::Release);
         }
     }
@@ -82,11 +84,12 @@ macro_rules! release {
     }};
 }
 
-unsafe impl<P: Policy, R: Reclaimer> Protect for Guard<'_, '_, P, R> {
+unsafe impl<P: Policy, R: Reclaim> Protect for Guard<'_, '_, P, R> {
     type Reclaimer = R;
 
     #[inline]
     fn release(&mut self) {
+        self.local.as_ref().try_increase_ops_count(Operation::Release);
         unsafe { (*self.hazard).set_thread_reserved(Ordering::Release) };
     }
 

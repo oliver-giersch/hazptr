@@ -7,34 +7,38 @@ use core::sync::atomic::Ordering;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
+        use std::sync::Arc;
         use std::rc::Rc;
         use std::vec::Vec;
     } else {
+        use alloc::sync::Arc;
         use alloc::rc::Rc;
         use alloc::vec::Vec;
     }
 }
 
 use arrayvec::{ArrayVec, CapacityError};
-use conquer_reclaim::{RawRetired, Reclaimer, ReclaimerHandle, Retired};
+use conquer_reclaim::{RawRetired, Reclaim, ReclaimerLocalRef, Retired};
 
+use crate::config::{Config, Operation};
 use crate::global::GlobalHandle;
 use crate::guard::Guard;
-use crate::hazard::{Hazard, ProtectStrategy, Protected};
+use crate::hazard::{HazardPtr, ProtectStrategy, ProtectedPtr};
 use crate::policy::Policy;
+use crate::{ArcHp, Hp};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // LocalHandle
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct LocalHandle<'local, 'global, P: Policy, R: Reclaimer> {
+pub struct LocalHandle<'local, 'global, P: Policy, R: Reclaim> {
     inner: LocalRef<'local, 'global, P>,
     _marker: PhantomData<R>,
 }
 
 /*********** impl Clone ***************************************************************************/
 
-impl<'local, 'global, P: Policy, R: Reclaimer> Clone for LocalHandle<'local, 'global, P, R> {
+impl<'local, 'global, P: Policy, R: Reclaim> Clone for LocalHandle<'local, 'global, P, R> {
     #[inline]
     fn clone(&self) -> Self {
         Self { inner: self.inner.clone(), _marker: PhantomData }
@@ -43,10 +47,10 @@ impl<'local, 'global, P: Policy, R: Reclaimer> Clone for LocalHandle<'local, 'gl
 
 /********** impl inherent *************************************************************************/
 
-impl<'global, P: Policy, R: Reclaimer> LocalHandle<'_, 'global, P, R> {
+impl<'global, P: Policy, R: Reclaim> LocalHandle<'_, 'global, P, R> {
     #[inline]
-    pub fn owning(global: GlobalHandle<'global, P>) -> Self {
-        Self { inner: LocalRef::Rc(Rc::new(Local::new(global))), _marker: PhantomData }
+    pub fn new(config: Config, global: GlobalHandle<'global, P>) -> Self {
+        Self { inner: LocalRef::Rc(Rc::new(Local::new(config, global))), _marker: PhantomData }
     }
 
     #[inline]
@@ -60,7 +64,7 @@ impl<'global, P: Policy, R: Reclaimer> LocalHandle<'_, 'global, P, R> {
     }
 }
 
-impl<'local, 'global, P: Policy, R: Reclaimer> LocalHandle<'local, 'global, P, R> {
+impl<'local, 'global, P: Policy, R: Reclaim> LocalHandle<'local, 'global, P, R> {
     #[inline]
     pub fn from_ref(local: &'local Local<'global, P>) -> Self {
         Self { inner: LocalRef::Ref(local), _marker: PhantomData }
@@ -69,7 +73,7 @@ impl<'local, 'global, P: Policy, R: Reclaimer> LocalHandle<'local, 'global, P, R
 
 /*********** impl AsRef ***************************************************************************/
 
-impl<'local, 'global, P: Policy, R: Reclaimer> AsRef<Local<'global, P>>
+impl<'local, 'global, P: Policy, R: Reclaim> AsRef<Local<'global, P>>
     for LocalHandle<'local, 'global, P, R>
 {
     #[inline]
@@ -82,24 +86,57 @@ impl<'local, 'global, P: Policy, R: Reclaimer> AsRef<Local<'global, P>>
     }
 }
 
-/********** impl ReclaimerHandle ******************************************************************/
+/********** impl ReclaimerRef *********************************************************************/
 
-unsafe impl<'local, 'global, P, R> ReclaimerHandle for LocalHandle<'local, 'global, P, R>
-where
-    P: Policy,
-    R: Reclaimer,
+unsafe impl<'local, 'global, P: Policy> ReclaimerLocalRef
+    for LocalHandle<'local, 'global, P, ArcHp<P>>
 {
-    type Reclaimer = R;
-    type Guard = Guard<'local, 'global, P, R>;
+    type Guard = Guard<'local, 'global, P, Self::Reclaimer>;
+    type Reclaimer = ArcHp<P>;
 
     #[inline]
-    fn guard(self) -> Self::Guard {
+    fn from_ref(global: &Self::Reclaimer) -> Self {
+        Self::new(Default::default(), GlobalHandle::owned(Arc::clone(&global.handle)))
+    }
+
+    #[inline]
+    unsafe fn from_raw(global: &Self::Reclaimer) -> Self {
+        Self::new(Default::default(), GlobalHandle::from_raw())
+    }
+
+    #[inline]
+    fn into_guard(self) -> Self::Guard {
         Guard::with_handle(self)
     }
 
     #[inline]
     unsafe fn retire(self, record: Retired<Self::Reclaimer>) {
         self.as_ref().retire(record.into_raw())
+    }
+}
+
+unsafe impl<'local, 'global, P> ReclaimerLocalRef for LocalHandle<'local, 'global, P, Hp<P>>
+where
+    P: Policy,
+{
+    type Guard = Guard<'local, 'global, P, Self::Reclaimer>;
+    type Reclaimer = Hp<P>;
+
+    #[inline]
+    fn from_ref(global: &Self::Reclaimer) -> Self {
+        LocalHandle::new(Default::default(), GlobalHandle::from_ref(&global.state))
+    }
+
+    unsafe fn from_raw(global: *const Self::Reclaimer) -> Self {
+        unimplemented!()
+    }
+
+    fn into_guard(self) -> Self::Guard {
+        unimplemented!()
+    }
+
+    unsafe fn retire(self, retired: Retired<Self::Reclaimer>) {
+        unimplemented!()
     }
 }
 
@@ -115,8 +152,18 @@ pub struct Local<'global, P: Policy> {
 
 impl<'global, P: Policy> Local<'global, P> {
     #[inline]
-    pub fn new(global: GlobalHandle<'global, P>) -> Self {
-        Self { inner: UnsafeCell::new(LocalInner::new(global)) }
+    pub fn new(config: Config, global: GlobalHandle<'global, P>) -> Self {
+        Self { inner: UnsafeCell::new(LocalInner::new(config, global)) }
+    }
+
+    #[inline]
+    pub(crate) fn config(&self) -> &Config {
+        unsafe { &(*self.inner.get()).config }
+    }
+
+    #[inline]
+    pub(crate) fn try_increase_ops_count(&self, op: Operation) {
+        unsafe { (*self.inner.get()).try_increase_ops_count(op) }
     }
 
     #[inline]
@@ -125,12 +172,15 @@ impl<'global, P: Policy> Local<'global, P> {
     }
 
     #[inline]
-    pub(crate) fn get_hazard(&self, strategy: ProtectStrategy) -> &Hazard {
+    pub(crate) fn get_hazard(&self, strategy: ProtectStrategy) -> &HazardPtr {
         unsafe { (*self.inner.get()).get_hazard(strategy) }
     }
 
     #[inline]
-    pub(crate) fn try_recycle_hazard(&self, hazard: &'global Hazard) -> Result<(), RecycleError> {
+    pub(crate) fn try_recycle_hazard(
+        &self,
+        hazard: &'global HazardPtr,
+    ) -> Result<(), RecycleError> {
         unsafe { (*self.inner.get()).try_recycle_hazard(hazard) }
     }
 }
@@ -142,24 +192,23 @@ impl<'global, P: Policy> Local<'global, P> {
 const HAZARD_CACHE: usize = 16;
 
 struct LocalInner<'global, P: Policy> {
+    config: Config,
     global: GlobalHandle<'global, P>,
-    // config: ???, how to count, thresholds, etc
-    state: ManuallyDrop<P::LocalState>,
-    flush_count: u32,
+    state: ManuallyDrop<P>,
     ops_count: u32,
-    hazard_cache: ArrayVec<[&'global Hazard; HAZARD_CACHE]>,
-    scan_cache: Vec<Protected>,
+    hazard_cache: ArrayVec<[&'global HazardPtr; HAZARD_CACHE]>,
+    scan_cache: Vec<ProtectedPtr>,
 }
 
 /********** impl inherent *************************************************************************/
 
 impl<'global, P: Policy> LocalInner<'global, P> {
     #[inline]
-    fn new(global: GlobalHandle<'global, P>) -> Self {
+    fn new(config: Config, global: GlobalHandle<'global, P>) -> Self {
         Self {
+            config,
             global,
             state: Default::default(),
-            flush_count: Default::default(),
             ops_count: Default::default(),
             hazard_cache: Default::default(),
             scan_cache: Default::default(),
@@ -167,14 +216,27 @@ impl<'global, P: Policy> LocalInner<'global, P> {
     }
 
     #[inline]
-    fn retire(&mut self, retired: RawRetired) {
-        unsafe { P::retire(&mut *self.state, &self.global.as_ref().state) };
-        // FIXME: increase op count conditionally
-        unimplemented!()
+    fn try_increase_ops_count(&mut self, op: Operation) {
+        if op == self.config.count_strategy {
+            self.ops_count += 1;
+
+            if self.ops_count == self.config.ops_count_threshold {
+                self.ops_count = 0;
+                unimplemented!() // fixme: scan records
+            }
+        }
     }
 
     #[inline]
-    fn get_hazard(&mut self, strategy: ProtectStrategy) -> &Hazard {
+    fn retire(&mut self, retired: RawRetired) {
+        unsafe { self.state.retire(&self.global.as_ref().state, retired) };
+        if self.config.is_count_retire() {
+            self.ops_count += 1;
+        }
+    }
+
+    #[inline]
+    fn get_hazard(&mut self, strategy: ProtectStrategy) -> &HazardPtr {
         match self.hazard_cache.pop() {
             Some(hazard) => {
                 if let ProtectStrategy::Protect(protected) = strategy {
@@ -188,7 +250,7 @@ impl<'global, P: Policy> LocalInner<'global, P> {
     }
 
     #[inline]
-    fn try_recycle_hazard(&mut self, hazard: &'global Hazard) -> Result<(), RecycleError> {
+    fn try_recycle_hazard(&mut self, hazard: &'global HazardPtr) -> Result<(), RecycleError> {
         self.hazard_cache.try_push(hazard)?;
         hazard.set_thread_reserved(Ordering::Release);
 
@@ -241,9 +303,9 @@ pub struct RecycleError;
 
 /********** impl From *****************************************************************************/
 
-impl From<CapacityError<&'_ Hazard>> for RecycleError {
+impl From<CapacityError<&'_ HazardPtr>> for RecycleError {
     #[inline]
-    fn from(_: CapacityError<&Hazard>) -> Self {
+    fn from(_: CapacityError<&HazardPtr>) -> Self {
         RecycleError
     }
 }

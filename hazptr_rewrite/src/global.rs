@@ -8,7 +8,7 @@ cfg_if::cfg_if! {
     }
 }
 
-use crate::hazard::{Hazard, HazardList, ProtectStrategy};
+use crate::hazard::{HazardList, HazardPtr, ProtectStrategy};
 use crate::policy::Policy;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -72,7 +72,7 @@ impl<P: Policy> Global<P> {
     }
 
     #[inline]
-    pub(crate) fn get_hazard(&self, strategy: ProtectStrategy) -> &Hazard {
+    pub(crate) fn get_hazard(&self, strategy: ProtectStrategy) -> &HazardPtr {
         match strategy {
             ProtectStrategy::ReserveOnly => self.hazards.get_or_insert_reserved_hazard(),
             ProtectStrategy::Protect(protected) => self.hazards.get_or_insert_hazard(protected),
@@ -85,7 +85,7 @@ impl<P: Policy> Global<P> {
 impl<P: Policy> Default for Global<P> {
     #[inline]
     fn default() -> Self {
-        unimplemented!()
+        Self { state: Default::default(), hazards: HazardList::new() }
     }
 }
 

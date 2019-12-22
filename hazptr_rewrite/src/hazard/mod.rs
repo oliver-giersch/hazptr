@@ -9,18 +9,18 @@ const FREE: *mut () = 0 as *mut ();
 const THREAD_RESERVED: *mut () = 1 as *mut ();
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Hazard
+// HazardPtr
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// A pointer visible to all threads that is protected from reclamation.
 #[derive(Debug)]
-pub(crate) struct Hazard {
+pub(crate) struct HazardPtr {
     protected: AtomicPtr<()>,
 }
 
 /********** impl Hazard ***************************************************************************/
 
-impl Hazard {
+impl HazardPtr {
     #[inline]
     pub const fn new() -> Self {
         Self { protected: AtomicPtr::new(FREE) }
@@ -42,9 +42,9 @@ impl Hazard {
     }
 
     #[inline]
-    pub fn protected(&self, order: Ordering) -> Option<Protected> {
+    pub fn protected(&self, order: Ordering) -> Option<ProtectedPtr> {
         match NonNull::new(self.protected.load(order)) {
-            Some(ptr) if ptr.as_ptr() != THREAD_RESERVED => Some(Protected(ptr)),
+            Some(ptr) if ptr.as_ptr() != THREAD_RESERVED => Some(ProtectedPtr(ptr)),
             _ => None,
         }
     }
@@ -57,7 +57,7 @@ impl Hazard {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Protected
+// ProtectedPtr
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// An untyped pointer protected from reclamation, because it is stored within a hazard pair.
@@ -65,11 +65,11 @@ impl Hazard {
 /// The type information is deliberately stripped as it is not needed in order to determine whether
 /// a pointer is protected or not.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Protected(NonNull<()>);
+pub struct ProtectedPtr(NonNull<()>);
 
 /********** impl inherent *************************************************************************/
 
-impl Protected {
+impl ProtectedPtr {
     #[inline]
     pub fn as_const_ptr(self) -> *const () {
         self.0.as_ptr() as *const _
@@ -94,5 +94,5 @@ impl Protected {
 
 pub(crate) enum ProtectStrategy {
     ReserveOnly,
-    Protect(Protected),
+    Protect(ProtectedPtr),
 }

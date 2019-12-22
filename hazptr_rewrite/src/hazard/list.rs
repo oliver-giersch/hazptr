@@ -1,41 +1,61 @@
+/// An iterable lock-free data structure for storing hazard pointers.
 use core::mem::{self, MaybeUninit};
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
+cfg_if::cfg_if! {
+    if #[cfg(feature = "std")] {
+        use std::boxed::Box;
+    } else {
+        use alloc::boxed::Box;
+    }
+}
+
 use conquer_util::align::Aligned128 as CacheAligned;
 
-use crate::hazard::{Hazard, Protected, FREE, THREAD_RESERVED};
+use crate::hazard::{HazardPtr, ProtectedPtr, FREE, THREAD_RESERVED};
 
-// the number of elements is chosen so that 31 hazards aligned to 128-byte and
-// one likewise aligned next pointer fit into a 4096 byte memory page.
+/// The number of elements is chosen so that 31 hazards aligned to 128-byte and
+/// one likewise aligned next pointer fit into a 4096 byte memory page.
 const ELEMENTS: usize = 31;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HazardList
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A linked list of [`HazardArrayNode`]s containing re-usable hazard pointers.
+///
+/// When requesting a hazard pointer, the list is traversed from head to tail
+/// and each node is searched for a [`FREE`] hazard pointer.
+/// If none can be found a new node is appended to the list's tail.
+/// In order to avoid having to deal with memory reclamation the list never
+/// shrinks and hence maintains its maximum extent at all times.
 #[derive(Debug)]
 pub(crate) struct HazardList {
+    /// Atomic pointer to the head of the linked list.
     head: AtomicPtr<HazardArrayNode>,
 }
 
 /********** impl inherent *************************************************************************/
 
 impl HazardList {
+    /// Creates a new empty [`HazardList`].
     #[inline]
     pub const fn new() -> Self {
         Self { head: AtomicPtr::new(ptr::null_mut()) }
     }
 
+    /// Acquires a thread-reserved hazard pointer.
     #[cold]
     #[inline(never)]
-    pub fn get_or_insert_reserved_hazard(&self) -> &Hazard {
+    pub fn get_or_insert_reserved_hazard(&self) -> &HazardPtr {
         unsafe { self.get_or_insert_unchecked(THREAD_RESERVED, Ordering::Relaxed) }
     }
 
+    /// Acquires a hazard pointer and sets it to point at `protected`.
     #[cold]
     #[inline(never)]
-    pub fn get_or_insert_hazard(&self, protected: Protected) -> &Hazard {
+    pub fn get_or_insert_hazard(&self, protected: ProtectedPtr) -> &HazardPtr {
         unsafe { self.get_or_insert_unchecked(protected.as_const_ptr(), Ordering::SeqCst) }
     }
 
@@ -45,7 +65,7 @@ impl HazardList {
     }
 
     #[inline]
-    unsafe fn get_or_insert_unchecked(&self, protected: *const (), order: Ordering) -> &Hazard {
+    unsafe fn get_or_insert_unchecked(&self, protected: *const (), order: Ordering) -> &HazardPtr {
         let mut prev = &self.head as *const AtomicPtr<HazardArrayNode>;
         let mut curr = (*prev).load(Ordering::Acquire); // acquire
         while !curr.is_null() {
@@ -66,7 +86,7 @@ impl HazardList {
         mut tail: *const AtomicPtr<HazardArrayNode>,
         protected: *const (),
         order: Ordering,
-    ) -> &Hazard {
+    ) -> &HazardPtr {
         let node = Box::into_raw(Box::new(HazardArrayNode::new(protected)));
         while let Err(tail_node) =
             (*tail).compare_exchange(ptr::null_mut(), node, Ordering::AcqRel, Ordering::Acquire)
@@ -89,17 +109,16 @@ impl HazardList {
         node: *const HazardArrayNode,
         protected: *const (),
         order: Ordering,
-    ) -> Option<&Hazard> {
+    ) -> Option<&HazardPtr> {
         for element in &(*node).elements[1..] {
             let hazard = &element.aligned;
-            if hazard.protected.load(Ordering::Relaxed) == FREE {
-                if hazard
+            let success = hazard.protected.load(Ordering::Relaxed) == FREE
+                && hazard
                     .protected
                     .compare_exchange(FREE, protected as *mut (), order, Ordering::Relaxed)
-                    .is_ok()
-                {
-                    return Some(hazard);
-                }
+                    .is_ok();
+            if success {
+                return Some(hazard);
             }
         }
 
@@ -132,11 +151,11 @@ pub(crate) struct Iter<'a> {
 /********** impl Iterator *************************************************************************/
 
 impl<'a> Iterator for Iter<'a> {
-    type Item = &'a Hazard;
+    type Item = &'a HazardPtr;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        // loop is executed at most twice
+        // this loop is executed at most twice
         while let Some(node) = self.curr {
             if self.idx < ELEMENTS {
                 return Some(&node.elements[self.idx].aligned);
@@ -155,7 +174,7 @@ impl<'a> Iterator for Iter<'a> {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct HazardArrayNode {
-    elements: [CacheAligned<Hazard>; ELEMENTS],
+    elements: [CacheAligned<HazardPtr>; ELEMENTS],
     next: CacheAligned<AtomicPtr<HazardArrayNode>>,
 }
 
@@ -164,12 +183,12 @@ struct HazardArrayNode {
 impl HazardArrayNode {
     #[inline]
     fn new(protected: *const ()) -> Self {
-        let mut elements: [MaybeUninit<CacheAligned<Hazard>>; ELEMENTS] =
+        let mut elements: [MaybeUninit<CacheAligned<HazardPtr>>; ELEMENTS] =
             unsafe { MaybeUninit::uninit().assume_init() };
 
-        elements[0] = MaybeUninit::new(CacheAligned::new(Hazard::with_protected(protected)));
+        elements[0] = MaybeUninit::new(CacheAligned::new(HazardPtr::with_protected(protected)));
         for elem in &mut elements[1..] {
-            *elem = MaybeUninit::new(CacheAligned::new(Hazard::new()));
+            *elem = MaybeUninit::new(CacheAligned::new(HazardPtr::new()));
         }
 
         unsafe {
