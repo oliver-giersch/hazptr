@@ -1,52 +1,45 @@
 use core::convert::AsRef;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "std")] {
-        use std::sync::Arc;
-    } else {
-        use alloc::sync::Arc;
-    }
-}
-
 use crate::hazard::{HazardList, HazardPtr, ProtectStrategy};
-use crate::policy::Policy;
+use crate::retire::RetireStrategy;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // GlobalHandle
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct GlobalHandle<'global, P: Policy> {
-    inner: GlobalRef<'global, P>,
+#[derive(Debug)]
+pub struct GlobalHandle<'global, S: RetireStrategy> {
+    inner: GlobalRef<'global, S>,
 }
 
 /********** impl inherent *************************************************************************/
 
-impl<P: Policy> GlobalHandle<'_, P> {
+impl<'global, S: RetireStrategy> GlobalHandle<'global, S> {
     #[inline]
-    pub fn from_owned(global: Arc<Global<P>>) -> Self {
-        Self { inner: GlobalRef::Arc(global) }
-    }
-
-    #[inline]
-    pub unsafe fn from_raw(global: *const Global<P>) -> Self {
-        Self { inner: GlobalRef::Raw(global) }
+    pub fn from_ref(global: &'global Global<S>) -> Self {
+        Self { inner: GlobalRef::Ref(global) }
     }
 }
 
-impl<'global, P: Policy> GlobalHandle<'global, P> {
+impl<S: RetireStrategy> GlobalHandle<'_, S> {
+    /// Creates a new [`GlobalHandle`] from a raw pointer.
+    ///
+    /// # Safety
+    ///
+    /// The caller has to ensure that the resulting [`GlobalHandle`] does not
+    /// outlive the [`Global`] it points to.
     #[inline]
-    pub fn from_ref(global: &'global Global<P>) -> Self {
-        Self { inner: GlobalRef::Ref(global) }
+    pub unsafe fn from_raw(global: *const Global<S>) -> Self {
+        Self { inner: GlobalRef::Raw(global) }
     }
 }
 
 /********** impl AsRef ****************************************************************************/
 
-impl<'global, P: Policy> AsRef<Global<P>> for GlobalHandle<'global, P> {
+impl<'global, S: RetireStrategy> AsRef<Global<S>> for GlobalHandle<'global, S> {
     #[inline]
-    fn as_ref(&self) -> &Global<P> {
+    fn as_ref(&self) -> &Global<S> {
         match &self.inner {
-            GlobalRef::Arc(global) => global.as_ref(),
             GlobalRef::Ref(global) => *global,
             GlobalRef::Raw(ref global) => unsafe { &**global },
         }
@@ -58,14 +51,14 @@ impl<'global, P: Policy> AsRef<Global<P>> for GlobalHandle<'global, P> {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-pub struct Global<P: Policy> {
-    pub(crate) state: P::GlobalState,
+pub struct Global<S: RetireStrategy> {
+    pub(crate) state: S::Global,
     hazards: HazardList,
 }
 
 /********** impl inherent *************************************************************************/
 
-impl<P: Policy> Global<P> {
+impl<S: RetireStrategy> Global<S> {
     #[inline]
     pub fn new() -> Self {
         Self { state: Default::default(), hazards: HazardList::new() }
@@ -82,7 +75,7 @@ impl<P: Policy> Global<P> {
 
 /********** impl Default **************************************************************************/
 
-impl<P: Policy> Default for Global<P> {
+impl<S: RetireStrategy> Default for Global<S> {
     #[inline]
     fn default() -> Self {
         Self { state: Default::default(), hazards: HazardList::new() }
@@ -93,8 +86,8 @@ impl<P: Policy> Default for Global<P> {
 // GlobalRef
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub(crate) enum GlobalRef<'a, P: Policy> {
-    Arc(Arc<Global<P>>),
-    Ref(&'a Global<P>),
-    Raw(*const Global<P>),
+#[derive(Debug)]
+pub(crate) enum GlobalRef<'a, S: RetireStrategy> {
+    Ref(&'a Global<S>),
+    Raw(*const Global<S>),
 }

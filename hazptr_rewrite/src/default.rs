@@ -2,21 +2,23 @@ use std::rc::Rc;
 use std::sync::RwLock;
 
 use conquer_once::Lazy;
-use conquer_reclaim::{GlobalReclaim, Reclaim, ReclaimerLocalRef, Retired};
+use conquer_reclaim::{BuildReclaimRef, GlobalReclaim, Reclaim, ReclaimRef, Retired};
 
 use crate::config::Config;
 use crate::global::GlobalHandle;
 use crate::guard::Guard;
 use crate::local::LocalHandle;
-use crate::policy::{LocalRetire, Policy};
+use crate::retire::{LocalRetire, RetireStrategy};
 
 type Local = crate::local::Local<'static, LocalRetire>;
 type Hp = crate::Hp<LocalRetire>;
 
 /********** global & thread-local *****************************************************************/
 
-/// Global hazard pointer configuration.
+/// The global hazard pointer configuration.
 pub static CONFIG: Lazy<RwLock<Config>> = Lazy::new(Default::default);
+
+/// The global hazard pointer state.
 static HP: Lazy<Hp> = Lazy::new(Default::default);
 
 thread_local!(static LOCAL: Rc<Local> = {
@@ -28,6 +30,7 @@ thread_local!(static LOCAL: Rc<Local> = {
 // GlobalHP
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A handle to the global hazard pointer state.
 #[derive(Debug, Default)]
 pub struct GlobalHp;
 
@@ -35,16 +38,16 @@ pub struct GlobalHp;
 
 impl GlobalReclaim for GlobalHp {
     #[inline]
-    fn build_local_ref() -> Self::Ref {
-        DefaultHandle
+    fn build_global_ref() -> Self::Ref {
+        GlobalRef
     }
 }
 
 /********** impl Reclaimer ************************************************************************/
 
 unsafe impl Reclaim for GlobalHp {
-    type Header = <LocalRetire as Policy>::Header;
-    type Ref = DefaultHandle;
+    type Header = <LocalRetire as RetireStrategy>::Header;
+    type Ref = GlobalRef;
 
     #[inline]
     fn new() -> Self {
@@ -53,25 +56,29 @@ unsafe impl Reclaim for GlobalHp {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// DefaultHandle
+// GlobalRef
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Copy, Clone, Debug, Default)]
-pub struct DefaultHandle;
+pub struct GlobalRef;
 
-/********** impl ReclaimerHandle ******************************************************************/
+/********** impl BuildReclaimRef ******************************************************************/
 
-unsafe impl ReclaimerLocalRef for DefaultHandle {
+impl<'a> BuildReclaimRef<'a> for GlobalRef {
+    #[inline]
+    fn from_ref(_: &'a Self::Reclaimer) -> Self {
+        Self
+    }
+}
+
+/********** impl ReclaimRef ***********************************************************************/
+
+unsafe impl ReclaimRef for GlobalRef {
     type Guard = Guard<'static, 'static, LocalRetire, Self::Reclaimer>;
     type Reclaimer = GlobalHp;
 
     #[inline]
-    fn from_ref(_: &Self::Reclaimer) -> Self {
-        Self
-    }
-
-    #[inline]
-    unsafe fn from_raw(global: *const Self::Reclaimer) -> Self {
+    unsafe fn from_raw(_: &Self::Reclaimer) -> Self {
         Self
     }
 
@@ -83,8 +90,7 @@ unsafe impl ReclaimerLocalRef for DefaultHandle {
     #[inline]
     unsafe fn retire(self, record: Retired<Self::Reclaimer>) {
         LOCAL.with(move |local| {
-            let handle = LocalHandle::from_ref(local);
-            handle.retire(record);
+            local.retire(record.into_raw());
         });
     }
 }

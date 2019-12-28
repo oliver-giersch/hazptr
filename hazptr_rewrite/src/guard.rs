@@ -10,24 +10,24 @@ use conquer_reclaim::{Atomic, NotEqualError, Protect, Reclaim, Shared};
 use crate::config::Operation;
 use crate::hazard::{HazardPtr, ProtectStrategy};
 use crate::local::LocalHandle;
-use crate::policy::Policy;
+use crate::retire::RetireStrategy;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Guard
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct Guard<'local, 'global, P: Policy, R: Reclaim> {
+pub struct Guard<'local, 'global, S: RetireStrategy, R: Reclaim> {
     /// Hazards are borrowed through the local handle from global state, so they
     /// act like `'global` references.
     hazard: *const HazardPtr,
     /// Each guard contains an e.g. reference-counted local handle which is
     /// accessed when a guard is cloned or dropped.
-    local: LocalHandle<'local, 'global, P, R>,
+    local: LocalHandle<'local, 'global, S, R>,
 }
 
 /********** impl Clone ****************************************************************************/
 
-impl<'local, 'global, P: Policy, R: Reclaim> Clone for Guard<'local, 'global, P, R> {
+impl<'local, 'global, S: RetireStrategy, R: Reclaim> Clone for Guard<'local, 'global, S, R> {
     #[inline]
     fn clone(&self) -> Self {
         let local = self.local.clone();
@@ -53,9 +53,9 @@ impl<'local, 'global, P: Policy, R: Reclaim> Clone for Guard<'local, 'global, P,
 
 /********** impl inherent *************************************************************************/
 
-impl<'local, 'global, P: Policy, R: Reclaim> Guard<'local, 'global, P, R> {
+impl<'local, 'global, S: RetireStrategy, R: Reclaim> Guard<'local, 'global, S, R> {
     #[inline]
-    pub fn with_handle(local: LocalHandle<'local, 'global, P, R>) -> Self {
+    pub fn with_handle(local: LocalHandle<'local, 'global, S, R>) -> Self {
         let hazard = local.as_ref().get_hazard(ProtectStrategy::ReserveOnly);
         Self { hazard, local }
     }
@@ -63,7 +63,7 @@ impl<'local, 'global, P: Policy, R: Reclaim> Guard<'local, 'global, P, R> {
 
 /********** impl Drop *****************************************************************************/
 
-impl<'local, 'global, P: Policy, R: Reclaim> Drop for Guard<'local, 'global, P, R> {
+impl<'local, 'global, S: RetireStrategy, R: Reclaim> Drop for Guard<'local, 'global, S, R> {
     #[inline]
     fn drop(&mut self) {
         let local = self.local.as_ref();
@@ -84,7 +84,7 @@ macro_rules! release {
     }};
 }
 
-unsafe impl<P: Policy, R: Reclaim> Protect for Guard<'_, '_, P, R> {
+unsafe impl<S: RetireStrategy, R: Reclaim> Protect for Guard<'_, '_, S, R> {
     type Reclaimer = R;
 
     #[inline]

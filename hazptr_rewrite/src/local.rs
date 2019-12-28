@@ -7,38 +7,36 @@ use core::sync::atomic::Ordering;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "std")] {
-        use std::sync::Arc;
         use std::rc::Rc;
-        use std::vec::Vec;
     } else {
-        use alloc::sync::Arc;
         use alloc::rc::Rc;
         use alloc::vec::Vec;
     }
 }
 
 use arrayvec::{ArrayVec, CapacityError};
-use conquer_reclaim::{RawRetired, Reclaim, ReclaimerLocalRef, Retired};
+use conquer_reclaim::{BuildReclaimRef, RawRetired, Reclaim, ReclaimRef, Retired};
 
 use crate::config::{Config, Operation};
 use crate::global::GlobalHandle;
 use crate::guard::Guard;
 use crate::hazard::{HazardPtr, ProtectStrategy, ProtectedPtr};
-use crate::policy::Policy;
-use crate::{ArcHp, Hp};
+use crate::retire::RetireStrategy;
+use crate::Hp;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // LocalHandle
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct LocalHandle<'local, 'global, P: Policy, R: Reclaim> {
-    inner: LocalRef<'local, 'global, P>,
+#[derive(Debug)]
+pub struct LocalHandle<'local, 'global, S: RetireStrategy, R: Reclaim> {
+    inner: LocalRef<'local, 'global, S>,
     _marker: PhantomData<R>,
 }
 
 /*********** impl Clone ***************************************************************************/
 
-impl<'local, 'global, P: Policy, R: Reclaim> Clone for LocalHandle<'local, 'global, P, R> {
+impl<'local, 'global, S: RetireStrategy, R: Reclaim> Clone for LocalHandle<'local, 'global, S, R> {
     #[inline]
     fn clone(&self) -> Self {
         Self { inner: self.inner.clone(), _marker: PhantomData }
@@ -47,37 +45,39 @@ impl<'local, 'global, P: Policy, R: Reclaim> Clone for LocalHandle<'local, 'glob
 
 /********** impl inherent *************************************************************************/
 
-impl<'global, P: Policy, R: Reclaim> LocalHandle<'_, 'global, P, R> {
+impl<'global, S: RetireStrategy, R: Reclaim> LocalHandle<'_, 'global, S, R> {
     #[inline]
-    pub fn new(config: Config, global: GlobalHandle<'global, P>) -> Self {
+    pub fn new(config: Config, global: GlobalHandle<'global, S>) -> Self {
         Self { inner: LocalRef::Rc(Rc::new(Local::new(config, global))), _marker: PhantomData }
     }
 
     #[inline]
-    pub fn from_owned(local: Rc<Local<'global, P>>) -> Self {
+    pub fn from_owned(local: Rc<Local<'global, S>>) -> Self {
         Self { inner: LocalRef::Rc(local), _marker: PhantomData }
     }
 
     #[inline]
-    pub unsafe fn from_raw(local: *const Local<'global, P>) -> Self {
+    pub unsafe fn from_raw(local: *const Local<'global, S>) -> Self {
         Self { inner: LocalRef::Raw(local), _marker: PhantomData }
     }
 }
 
-impl<'local, 'global, P: Policy, R: Reclaim> LocalHandle<'local, 'global, P, R> {
+impl<'local, 'global, S: RetireStrategy, R: Reclaim> LocalHandle<'local, 'global, S, R> {
     #[inline]
-    pub fn from_ref(local: &'local Local<'global, P>) -> Self {
+    pub fn from_ref(local: &'local Local<'global, S>) -> Self {
         Self { inner: LocalRef::Ref(local), _marker: PhantomData }
     }
 }
 
 /*********** impl AsRef ***************************************************************************/
 
-impl<'local, 'global, P: Policy, R: Reclaim> AsRef<Local<'global, P>>
-    for LocalHandle<'local, 'global, P, R>
+impl<'local, 'global, S, R> AsRef<Local<'global, S>> for LocalHandle<'local, 'global, S, R>
+where
+    S: RetireStrategy,
+    R: Reclaim,
 {
     #[inline]
-    fn as_ref(&self) -> &Local<'global, P> {
+    fn as_ref(&self) -> &Local<'global, S> {
         match &self.inner {
             LocalRef::Rc(local) => local.as_ref(),
             LocalRef::Ref(local) => local,
@@ -86,22 +86,31 @@ impl<'local, 'global, P: Policy, R: Reclaim> AsRef<Local<'global, P>>
     }
 }
 
-/********** impl ReclaimerRef *********************************************************************/
+/********** impl BuildReclaimRef ******************************************************************/
 
-unsafe impl<'local, 'global, P: Policy> ReclaimerLocalRef
-    for LocalHandle<'local, 'global, P, ArcHp<P>>
+impl<'local, 'global, S> BuildReclaimRef<'global> for LocalHandle<'local, 'global, S, Hp<S>>
+where
+    Self: 'global,
+    S: RetireStrategy,
 {
-    type Guard = Guard<'local, 'global, P, Self::Reclaimer>;
-    type Reclaimer = ArcHp<P>;
-
     #[inline]
-    fn from_ref(global: &Self::Reclaimer) -> Self {
-        Self::new(Default::default(), GlobalHandle::owned(Arc::clone(&global.handle)))
+    fn from_ref(global: &'global Self::Reclaimer) -> Self {
+        Self::new(Default::default(), GlobalHandle::from_ref(&global.state))
     }
+}
+
+/********** impl ReclaimRef ***********************************************************************/
+
+unsafe impl<'local, 'global, S> ReclaimRef for LocalHandle<'local, 'global, S, Hp<S>>
+where
+    S: RetireStrategy,
+{
+    type Guard = Guard<'local, 'global, S, Self::Reclaimer>;
+    type Reclaimer = Hp<S>;
 
     #[inline]
     unsafe fn from_raw(global: &Self::Reclaimer) -> Self {
-        Self::new(Default::default(), GlobalHandle::from_raw())
+        Self::new(Default::default(), GlobalHandle::from_raw(&global.state))
     }
 
     #[inline]
@@ -110,33 +119,8 @@ unsafe impl<'local, 'global, P: Policy> ReclaimerLocalRef
     }
 
     #[inline]
-    unsafe fn retire(self, record: Retired<Self::Reclaimer>) {
-        self.as_ref().retire(record.into_raw())
-    }
-}
-
-unsafe impl<'local, 'global, P> ReclaimerLocalRef for LocalHandle<'local, 'global, P, Hp<P>>
-where
-    P: Policy,
-{
-    type Guard = Guard<'local, 'global, P, Self::Reclaimer>;
-    type Reclaimer = Hp<P>;
-
-    #[inline]
-    fn from_ref(global: &Self::Reclaimer) -> Self {
-        LocalHandle::new(Default::default(), GlobalHandle::from_ref(&global.state))
-    }
-
-    unsafe fn from_raw(global: *const Self::Reclaimer) -> Self {
-        unimplemented!()
-    }
-
-    fn into_guard(self) -> Self::Guard {
-        unimplemented!()
-    }
-
     unsafe fn retire(self, retired: Retired<Self::Reclaimer>) {
-        unimplemented!()
+        self.inner.as_ref().retire(retired.into_raw())
     }
 }
 
@@ -144,21 +128,17 @@ where
 // Local
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct Local<'global, P: Policy> {
-    inner: UnsafeCell<LocalInner<'global, P>>,
+#[derive(Debug)]
+pub struct Local<'global, S: RetireStrategy> {
+    inner: UnsafeCell<LocalInner<'global, S>>,
 }
 
 /********** impl inherent *************************************************************************/
 
-impl<'global, P: Policy> Local<'global, P> {
+impl<'global, S: RetireStrategy> Local<'global, S> {
     #[inline]
-    pub fn new(config: Config, global: GlobalHandle<'global, P>) -> Self {
+    pub fn new(config: Config, global: GlobalHandle<'global, S>) -> Self {
         Self { inner: UnsafeCell::new(LocalInner::new(config, global)) }
-    }
-
-    #[inline]
-    pub(crate) fn config(&self) -> &Config {
-        unsafe { &(*self.inner.get()).config }
     }
 
     #[inline]
@@ -191,10 +171,11 @@ impl<'global, P: Policy> Local<'global, P> {
 
 const HAZARD_CACHE: usize = 16;
 
-struct LocalInner<'global, P: Policy> {
+#[derive(Debug)]
+struct LocalInner<'global, S: RetireStrategy> {
     config: Config,
-    global: GlobalHandle<'global, P>,
-    state: ManuallyDrop<P>,
+    global: GlobalHandle<'global, S>,
+    state: ManuallyDrop<S>,
     ops_count: u32,
     hazard_cache: ArrayVec<[&'global HazardPtr; HAZARD_CACHE]>,
     scan_cache: Vec<ProtectedPtr>,
@@ -202,9 +183,9 @@ struct LocalInner<'global, P: Policy> {
 
 /********** impl inherent *************************************************************************/
 
-impl<'global, P: Policy> LocalInner<'global, P> {
+impl<'global, S: RetireStrategy> LocalInner<'global, S> {
     #[inline]
-    fn new(config: Config, global: GlobalHandle<'global, P>) -> Self {
+    fn new(config: Config, global: GlobalHandle<'global, S>) -> Self {
         Self {
             config,
             global,
@@ -229,7 +210,7 @@ impl<'global, P: Policy> LocalInner<'global, P> {
 
     #[inline]
     fn retire(&mut self, retired: RawRetired) {
-        unsafe { self.state.retire(&self.global.as_ref().state, retired) };
+        unsafe { self.state.retire(self.global.as_ref(), retired) };
         if self.config.is_count_retire() {
             self.ops_count += 1;
         }
@@ -260,11 +241,12 @@ impl<'global, P: Policy> LocalInner<'global, P> {
 
 /********** impl Drop *****************************************************************************/
 
-impl<P: Policy> Drop for LocalInner<'_, P> {
+impl<S: RetireStrategy> Drop for LocalInner<'_, S> {
     #[inline(never)]
     fn drop(&mut self) {
         let local_state = unsafe { ptr::read(&*self.state) };
-        P::on_thread_exit(local_state, &self.global.as_ref().state);
+        local_state.drop(&self.global.as_ref());
+        //P::on_thread_exit(local_state, &self.global.as_ref().state);
         // P::on_thread_exit(local_state, ...);
         unimplemented!()
     }
@@ -274,15 +256,29 @@ impl<P: Policy> Drop for LocalInner<'_, P> {
 // LocalRef
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-enum LocalRef<'local, 'global, P: Policy> {
-    Rc(Rc<Local<'global, P>>),
-    Ref(&'local Local<'global, P>),
-    Raw(*const Local<'global, P>),
+#[derive(Debug)]
+enum LocalRef<'local, 'global, S: RetireStrategy> {
+    Rc(Rc<Local<'global, S>>),
+    Ref(&'local Local<'global, S>),
+    Raw(*const Local<'global, S>),
+}
+
+/********** impl AsRef ****************************************************************************/
+
+impl<'global, S: RetireStrategy> AsRef<Local<'global, S>> for LocalRef<'_, 'global, S> {
+    #[inline]
+    fn as_ref(&self) -> &Local<'global, S> {
+        match self {
+            LocalRef::Rc(local) => &**local,
+            LocalRef::Ref(local) => *local,
+            LocalRef::Raw(local) => unsafe { &**local },
+        }
+    }
 }
 
 /********** impl Clone ****************************************************************************/
 
-impl<'local, 'global, P: Policy> Clone for LocalRef<'local, 'global, P> {
+impl<'local, 'global, S: RetireStrategy> Clone for LocalRef<'local, 'global, S> {
     #[inline]
     fn clone(&self) -> Self {
         match self {

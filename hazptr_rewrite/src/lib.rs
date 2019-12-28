@@ -11,74 +11,29 @@ mod global;
 mod guard;
 mod hazard;
 mod local;
-mod policy;
 mod queue;
-
-cfg_if::cfg_if! {
-    if #[cfg(feature = "std")] {
-        use std::sync::Arc;
-    } else {
-        use alloc::sync::Arc;
-    }
-}
+mod retire;
 
 use conquer_reclaim::Reclaim;
 
+pub use crate::config::{Config, ConfigBuilder};
+
 use crate::global::Global;
 use crate::local::LocalHandle;
-use crate::policy::Policy;
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// ArcHp
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#[derive(Debug)]
-pub struct ArcHp<P: Policy> {
-    handle: Arc<Global<P>>,
-}
-
-/********** impl Clone ****************************************************************************/
-
-impl<P: Policy> Clone for ArcHp<P> {
-    #[inline]
-    fn clone(&self) -> Self {
-        Self { handle: Arc::clone(&self.handle) }
-    }
-}
-
-/********** impl Default **************************************************************************/
-
-impl<P: Policy> Default for ArcHp<P> {
-    #[inline]
-    fn default() -> Self {
-        Self { handle: Arc::new(Default::default()) }
-    }
-}
-
-/********** impl Reclaim **************************************************************************/
-
-unsafe impl<P: Policy> Reclaim for ArcHp<P> {
-    type Header = P::Header;
-    type Ref = LocalHandle<'static, 'static, P, Self>;
-
-    #[inline]
-    fn new() -> Self {
-        Default::default()
-    }
-}
+use crate::retire::RetireStrategy;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Hp
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-pub struct Hp<P: Policy> {
-    state: Global<P>,
+pub struct Hp<S: RetireStrategy> {
+    state: Global<S>,
 }
 
 /********** impl Default **************************************************************************/
 
-impl<P: Policy> Default for Hp<P> {
+impl<S: RetireStrategy> Default for Hp<S> {
     #[inline]
     fn default() -> Self {
         Self { state: Global::new() }
@@ -87,9 +42,9 @@ impl<P: Policy> Default for Hp<P> {
 
 /********** impl Reclaim **************************************************************************/
 
-unsafe impl<P: Policy> Reclaim for Hp<P> {
-    type Header = P::Header;
-    type Ref = LocalHandle<'static, 'static, P, Self>;
+unsafe impl<S: RetireStrategy> Reclaim for Hp<S> {
+    type Header = S::Header;
+    type Ref = LocalHandle<'static, 'static, S, Self>;
 
     #[inline]
     fn new() -> Self {
