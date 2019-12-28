@@ -23,14 +23,12 @@ pub struct RawQueue<N> {
 
 /********** impl inherent *************************************************************************/
 
-impl<N> RawQueue<N> {
-    #[inline]
-    pub const fn new() -> Self {
-        Self { head: AtomicPtr::new(ptr::null_mut()) }
-    }
-}
-
 impl<N: RawNode> RawQueue<N> {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.head.load(Ordering::Relaxed).is_null()
+    }
+
     #[inline]
     pub unsafe fn push(&self, node: *mut N) {
         loop {

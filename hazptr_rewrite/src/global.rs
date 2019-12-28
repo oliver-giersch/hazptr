@@ -1,6 +1,7 @@
 use core::convert::AsRef;
+use core::sync::atomic::{self, Ordering};
 
-use crate::hazard::{HazardList, HazardPtr, ProtectStrategy};
+use crate::hazard::{HazardList, HazardPtr, ProtectStrategy, ProtectedPtr};
 use crate::retire::RetireStrategy;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -8,7 +9,7 @@ use crate::retire::RetireStrategy;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-pub struct GlobalHandle<'global, S: RetireStrategy> {
+pub(crate) struct GlobalHandle<'global, S: RetireStrategy> {
     inner: GlobalRef<'global, S>,
 }
 
@@ -60,7 +61,7 @@ pub struct Global<S: RetireStrategy> {
 
 impl<S: RetireStrategy> Global<S> {
     #[inline]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Default::default()
     }
 
@@ -71,14 +72,30 @@ impl<S: RetireStrategy> Global<S> {
             ProtectStrategy::Protect(protected) => self.hazards.get_or_insert_hazard(protected),
         }
     }
+
+    #[inline]
+    pub(crate) fn collect_protected_hazards(&self, vec: &mut Vec<ProtectedPtr>, order: Ordering) {
+        assert_eq!(order, Ordering::SeqCst, "this method must have `SeqCst` ordering");
+        vec.clear();
+
+        atomic::fence(Ordering::SeqCst);
+
+        for hazard in self.hazards.iter() {
+            if let Some(protected) = hazard.protected(Ordering::Relaxed) {
+                vec.push(protected);
+            }
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // GlobalRef
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A reference to a [`Global`] that is either safe but lifetime-bound or unsafe
+/// and lifetime-independent (a raw pointer).
 #[derive(Debug)]
-pub(crate) enum GlobalRef<'a, S: RetireStrategy> {
+enum GlobalRef<'a, S: RetireStrategy> {
     Ref(&'a Global<S>),
     Raw(*const Global<S>),
 }

@@ -1,4 +1,6 @@
-/// An iterable lock-free data structure for storing hazard pointers.
+//! An iterable lock-free data structure for storing hazard pointers.
+
+use core::iter::FusedIterator;
 use core::mem::{self, MaybeUninit};
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
@@ -168,6 +170,10 @@ impl<'a> Iterator for Iter<'a> {
         None
     }
 }
+
+/********** impl FusedIterator ********************************************************************/
+
+impl FusedIterator for Iter<'_> {}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HazardArrayNode

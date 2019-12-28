@@ -35,8 +35,8 @@ pub struct GlobalRetire;
 /********** impl RetireStrategy *******************************************************************/
 
 impl RetireStrategy for GlobalRetire {
-    type Header = Header;
     type Global = RetiredQueue;
+    type Header = Header;
 
     #[inline]
     fn new(_: &Global<Self>) -> Self {
@@ -45,6 +45,11 @@ impl RetireStrategy for GlobalRetire {
 
     #[inline]
     fn drop(self, _: &Global<Self>) {}
+
+    #[inline]
+    fn no_retired_records(&self, global: &Global<Self>) -> bool {
+        global.state.raw.is_empty()
+    }
 
     #[inline]
     unsafe fn reclaim_all_unprotected(

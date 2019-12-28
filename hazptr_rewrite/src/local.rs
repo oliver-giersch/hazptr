@@ -1,6 +1,5 @@
 use core::cell::UnsafeCell;
 use core::convert::AsRef;
-use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr;
 use core::sync::atomic::Ordering;
@@ -46,7 +45,7 @@ impl<'local, 'global, S: RetireStrategy> Clone for LocalHandle<'local, 'global, 
 
 impl<'global, S: RetireStrategy> LocalHandle<'_, 'global, S> {
     #[inline]
-    pub fn new(config: Config, global: GlobalHandle<'global, S>) -> Self {
+    pub(crate) fn new(config: Config, global: GlobalHandle<'global, S>) -> Self {
         Self { inner: LocalRef::Rc(Rc::new(Local::new(config, global))) }
     }
 
@@ -135,7 +134,7 @@ pub struct Local<'global, S: RetireStrategy> {
 
 impl<'global, S: RetireStrategy> Local<'global, S> {
     #[inline]
-    pub fn new(config: Config, global: GlobalHandle<'global, S>) -> Self {
+    pub(crate) fn new(config: Config, global: GlobalHandle<'global, S>) -> Self {
         Self { inner: UnsafeCell::new(LocalInner::new(config, global)) }
     }
 
@@ -201,7 +200,7 @@ impl<'global, S: RetireStrategy> LocalInner<'global, S> {
 
             if self.ops_count == self.config.ops_count_threshold {
                 self.ops_count = 0;
-                unimplemented!() // fixme: scan records
+                self.reclaim_all_unprotected();
             }
         }
     }
@@ -230,10 +229,25 @@ impl<'global, S: RetireStrategy> LocalInner<'global, S> {
 
     #[inline]
     fn try_recycle_hazard(&mut self, hazard: &'global HazardPtr) -> Result<(), RecycleError> {
+        // TODO: use small vec, incorporate config
         self.hazard_cache.try_push(hazard)?;
         hazard.set_thread_reserved(Ordering::Release);
 
         Ok(())
+    }
+
+    #[inline]
+    fn reclaim_all_unprotected(&mut self) {
+        let global = self.global.as_ref();
+        if self.state.no_retired_records(global) {
+            return;
+        }
+
+        // collect into scan_cache
+        self.global.as_ref().collect_protected_hazards(&mut self.scan_cache, Ordering::SeqCst);
+
+        self.scan_cache.sort_unstable();
+        unsafe { self.state.reclaim_all_unprotected(global, &self.scan_cache) };
     }
 }
 
@@ -242,10 +256,14 @@ impl<'global, S: RetireStrategy> LocalInner<'global, S> {
 impl<S: RetireStrategy> Drop for LocalInner<'_, S> {
     #[inline(never)]
     fn drop(&mut self) {
+        for hazard in self.hazard_cache.iter() {
+            hazard.set_free(Ordering::Relaxed);
+        }
+
+        // do a final reclaim attempt
+
         let local_state = unsafe { ptr::read(&*self.state) };
         local_state.drop(&self.global.as_ref());
-        //P::on_thread_exit(local_state, &self.global.as_ref().state);
-        // P::on_thread_exit(local_state, ...);
         unimplemented!()
     }
 }

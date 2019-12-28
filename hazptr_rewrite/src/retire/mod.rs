@@ -16,10 +16,10 @@ pub use self::{global_retire::GlobalRetire, local_retire::LocalRetire};
 
 /// An internal trait for abstracting over different retire strategies.
 pub trait RetireStrategy: Debug + Default + 'static {
-    /// The memory record header is dependent on the retire strategy.
-    type Header: Default + Sync + Sized;
     /// The global state required for the given retire strategy.
     type Global: Debug + Default + Send + Sync + Sized;
+    /// The memory record header is dependent on the retire strategy.
+    type Header: Default + Sync + Sized;
 
     /// Creates a new strategy instance and optionally accesses the global
     /// state.
@@ -27,6 +27,10 @@ pub trait RetireStrategy: Debug + Default + 'static {
 
     /// Drops the strategy instance and optionally accesses the global state.
     fn drop(self, global: &Global<Self>);
+
+    fn no_retired_records(&self, global: &Global<Self>) -> bool;
+
     unsafe fn reclaim_all_unprotected(&mut self, global: &Global<Self>, protected: &[ProtectedPtr]);
+
     unsafe fn retire(&mut self, global: &Global<Self>, retired: RawRetired);
 }

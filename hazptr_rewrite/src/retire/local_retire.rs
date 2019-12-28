@@ -23,11 +23,11 @@ use crate::retire::RetireStrategy;
 #[derive(Debug, Default)]
 pub struct LocalRetire(Box<RetireNode>);
 
-/********** impl Policy ***************************************************************************/
+/********** impl RetireStrategy *******************************************************************/
 
 impl RetireStrategy for LocalRetire {
-    type Header = (); // no additional per-record state is required
     type Global = AbandonedQueue;
+    type Header = (); // no additional per-record state is required
 
     #[inline]
     fn new(global: &Global<Self>) -> Self {
@@ -43,6 +43,11 @@ impl RetireStrategy for LocalRetire {
         if !self.0.vec.is_empty() {
             global.state.push(self.0);
         }
+    }
+
+    #[inline]
+    fn no_retired_records(&self, _: &Global<Self>) -> bool {
+        self.0.vec.is_empty()
     }
 
     #[inline]

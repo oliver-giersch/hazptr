@@ -13,7 +13,7 @@ use crate::retire::{LocalRetire, RetireStrategy};
 type Local = crate::local::Local<'static, LocalRetire>;
 type Hp = crate::Hp<LocalRetire>;
 
-/********** global & thread-local *****************************************************************/
+/********** globals & thread-locals ***************************************************************/
 
 /// The global hazard pointer configuration.
 pub static CONFIG: Lazy<RwLock<Config>> = Lazy::new(Default::default);
