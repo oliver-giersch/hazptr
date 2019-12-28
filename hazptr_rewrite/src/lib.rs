@@ -16,19 +16,37 @@ mod retire;
 
 use conquer_reclaim::Reclaim;
 
-pub use crate::config::{Config, ConfigBuilder};
+pub use crate::config::{Config, ConfigBuilder, Operation};
+pub use crate::local::LocalHandle;
+pub use crate::retire::{GlobalRetire, LocalRetire, RetireStrategy};
 
-use crate::global::Global;
-use crate::local::LocalHandle;
-use crate::retire::RetireStrategy;
+use crate::global::{Global, GlobalHandle};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Hp
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// The hazard pointer memory reclamation scheme.
 #[derive(Debug)]
 pub struct Hp<S: RetireStrategy> {
     state: Global<S>,
+}
+
+/********** impl inherent *************************************************************************/
+
+impl<S: RetireStrategy> Hp<S> {
+    #[inline]
+    pub fn build_local_handle(&self, config: Option<Config>) -> LocalHandle<'_, '_, S> {
+        LocalHandle::new(config.unwrap_or_default(), GlobalHandle::from_ref(&self.state))
+    }
+
+    #[inline]
+    pub unsafe fn build_local_handle_unchecked(
+        &self,
+        config: Option<Config>,
+    ) -> LocalHandle<'_, '_, S> {
+        LocalHandle::new(config.unwrap_or_default(), GlobalHandle::from_raw(&self.state))
+    }
 }
 
 /********** impl Default **************************************************************************/
@@ -43,8 +61,8 @@ impl<S: RetireStrategy> Default for Hp<S> {
 /********** impl Reclaim **************************************************************************/
 
 unsafe impl<S: RetireStrategy> Reclaim for Hp<S> {
-    type Header = S::Header;
-    type Ref = LocalHandle<'static, 'static, S, Self>;
+    type Header = S::Header; // the header type depends on the retire strategy
+    type Ref = LocalHandle<'static, 'static, S>;
 
     #[inline]
     fn new() -> Self {

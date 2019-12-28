@@ -29,52 +29,50 @@ use crate::Hp;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-pub struct LocalHandle<'local, 'global, S: RetireStrategy, R: Reclaim> {
+pub struct LocalHandle<'local, 'global, S: RetireStrategy> {
     inner: LocalRef<'local, 'global, S>,
-    _marker: PhantomData<R>,
 }
 
 /*********** impl Clone ***************************************************************************/
 
-impl<'local, 'global, S: RetireStrategy, R: Reclaim> Clone for LocalHandle<'local, 'global, S, R> {
+impl<'local, 'global, S: RetireStrategy> Clone for LocalHandle<'local, 'global, S> {
     #[inline]
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone(), _marker: PhantomData }
+        Self { inner: self.inner.clone() }
     }
 }
 
 /********** impl inherent *************************************************************************/
 
-impl<'global, S: RetireStrategy, R: Reclaim> LocalHandle<'_, 'global, S, R> {
+impl<'global, S: RetireStrategy> LocalHandle<'_, 'global, S> {
     #[inline]
     pub fn new(config: Config, global: GlobalHandle<'global, S>) -> Self {
-        Self { inner: LocalRef::Rc(Rc::new(Local::new(config, global))), _marker: PhantomData }
+        Self { inner: LocalRef::Rc(Rc::new(Local::new(config, global))) }
     }
 
     #[inline]
     pub fn from_owned(local: Rc<Local<'global, S>>) -> Self {
-        Self { inner: LocalRef::Rc(local), _marker: PhantomData }
+        Self { inner: LocalRef::Rc(local) }
     }
 
     #[inline]
     pub unsafe fn from_raw(local: *const Local<'global, S>) -> Self {
-        Self { inner: LocalRef::Raw(local), _marker: PhantomData }
+        Self { inner: LocalRef::Raw(local) }
     }
 }
 
-impl<'local, 'global, S: RetireStrategy, R: Reclaim> LocalHandle<'local, 'global, S, R> {
+impl<'local, 'global, S: RetireStrategy> LocalHandle<'local, 'global, S> {
     #[inline]
     pub fn from_ref(local: &'local Local<'global, S>) -> Self {
-        Self { inner: LocalRef::Ref(local), _marker: PhantomData }
+        Self { inner: LocalRef::Ref(local) }
     }
 }
 
 /*********** impl AsRef ***************************************************************************/
 
-impl<'local, 'global, S, R> AsRef<Local<'global, S>> for LocalHandle<'local, 'global, S, R>
+impl<'local, 'global, S> AsRef<Local<'global, S>> for LocalHandle<'local, 'global, S>
 where
     S: RetireStrategy,
-    R: Reclaim,
 {
     #[inline]
     fn as_ref(&self) -> &Local<'global, S> {
@@ -88,7 +86,7 @@ where
 
 /********** impl BuildReclaimRef ******************************************************************/
 
-impl<'local, 'global, S> BuildReclaimRef<'global> for LocalHandle<'local, 'global, S, Hp<S>>
+impl<'local, 'global, S> BuildReclaimRef<'global> for LocalHandle<'local, 'global, S>
 where
     Self: 'global,
     S: RetireStrategy,
@@ -101,7 +99,7 @@ where
 
 /********** impl ReclaimRef ***********************************************************************/
 
-unsafe impl<'local, 'global, S> ReclaimRef for LocalHandle<'local, 'global, S, Hp<S>>
+unsafe impl<'local, 'global, S> ReclaimRef for LocalHandle<'local, 'global, S>
 where
     S: RetireStrategy,
 {

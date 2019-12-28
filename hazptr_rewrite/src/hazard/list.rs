@@ -30,7 +30,7 @@ const ELEMENTS: usize = 31;
 /// If none can be found a new node is appended to the list's tail.
 /// In order to avoid having to deal with memory reclamation the list never
 /// shrinks and hence maintains its maximum extent at all times.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct HazardList {
     /// Atomic pointer to the head of the linked list.
     head: AtomicPtr<HazardArrayNode>,

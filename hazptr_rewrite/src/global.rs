@@ -50,7 +50,7 @@ impl<'global, S: RetireStrategy> AsRef<Global<S>> for GlobalHandle<'global, S> {
 // Global
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Global<S: RetireStrategy> {
     pub(crate) state: S::Global,
     hazards: HazardList,
@@ -61,7 +61,7 @@ pub struct Global<S: RetireStrategy> {
 impl<S: RetireStrategy> Global<S> {
     #[inline]
     pub fn new() -> Self {
-        Self { state: Default::default(), hazards: HazardList::new() }
+        Default::default()
     }
 
     #[inline]
@@ -70,15 +70,6 @@ impl<S: RetireStrategy> Global<S> {
             ProtectStrategy::ReserveOnly => self.hazards.get_or_insert_reserved_hazard(),
             ProtectStrategy::Protect(protected) => self.hazards.get_or_insert_hazard(protected),
         }
-    }
-}
-
-/********** impl Default **************************************************************************/
-
-impl<S: RetireStrategy> Default for Global<S> {
-    #[inline]
-    fn default() -> Self {
-        Self { state: Default::default(), hazards: HazardList::new() }
     }
 }
 

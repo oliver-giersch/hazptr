@@ -1,3 +1,4 @@
+use core::marker::PhantomData;
 use core::sync::atomic::Ordering;
 
 use conquer_reclaim::conquer_pointer::{
@@ -22,7 +23,8 @@ pub struct Guard<'local, 'global, S: RetireStrategy, R: Reclaim> {
     hazard: *const HazardPtr,
     /// Each guard contains an e.g. reference-counted local handle which is
     /// accessed when a guard is cloned or dropped.
-    local: LocalHandle<'local, 'global, S, R>,
+    local: LocalHandle<'local, 'global, S>,
+    _marker: PhantomData<R>,
 }
 
 /********** impl Clone ****************************************************************************/
@@ -31,13 +33,12 @@ impl<'local, 'global, S: RetireStrategy, R: Reclaim> Clone for Guard<'local, 'gl
     #[inline]
     fn clone(&self) -> Self {
         let local = self.local.clone();
-        match unsafe { (*self.hazard).protected(Ordering::Relaxed) } {
-            Some(protected) => Self {
-                hazard: local.as_ref().get_hazard(ProtectStrategy::Protect(protected)),
-                local,
-            },
-            None => Self { hazard: local.as_ref().get_hazard(ProtectStrategy::ReserveOnly), local },
-        }
+        let hazard = match unsafe { (*self.hazard).protected(Ordering::Relaxed) } {
+            Some(protected) => local.as_ref().get_hazard(ProtectStrategy::Protect(protected)),
+            None => local.as_ref().get_hazard(ProtectStrategy::ReserveOnly),
+        };
+
+        Self::new(hazard, local)
     }
 
     #[inline]
@@ -55,9 +56,14 @@ impl<'local, 'global, S: RetireStrategy, R: Reclaim> Clone for Guard<'local, 'gl
 
 impl<'local, 'global, S: RetireStrategy, R: Reclaim> Guard<'local, 'global, S, R> {
     #[inline]
-    pub fn with_handle(local: LocalHandle<'local, 'global, S, R>) -> Self {
+    pub fn with_handle(local: LocalHandle<'local, 'global, S>) -> Self {
         let hazard = local.as_ref().get_hazard(ProtectStrategy::ReserveOnly);
-        Self { hazard, local }
+        Self::new(hazard, local)
+    }
+
+    #[inline]
+    fn new(hazard: *const HazardPtr, local: LocalHandle<'local, 'global, S>) -> Self {
+        Self { hazard, local, _marker: PhantomData }
     }
 }
 

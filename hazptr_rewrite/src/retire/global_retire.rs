@@ -8,8 +8,8 @@
 //! records.
 //! It can also be applicable if records are only retired fairly infrequently.
 //!
-//! The disadvantages for this strategy lie in the inflated synchronization
-//! effort, since every retired record requires a synchronized access to a
+//! The disadvantages for this strategy lie in the increased synchronization
+//! overhead, since every retired record requires a synchronized access to a
 //! single global shared data structure, which limits scalability.
 
 use core::ptr;

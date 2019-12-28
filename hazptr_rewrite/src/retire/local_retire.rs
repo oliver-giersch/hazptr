@@ -1,6 +1,6 @@
 use core::cmp;
 use core::mem;
-use core::ptr::{self, NonNull};
+use core::ptr;
 
 cfg_if::cfg_if! {
     if #[cfg(not(feature = "std"))] {
@@ -26,21 +26,23 @@ pub struct LocalRetire(Box<RetireNode>);
 /********** impl Policy ***************************************************************************/
 
 impl RetireStrategy for LocalRetire {
-    type Header = ();
-    type Global = AbandonedQueue; // AbandonedBags, ...
+    type Header = (); // no additional per-record state is required
+    type Global = AbandonedQueue;
 
     #[inline]
     fn new(global: &Global<Self>) -> Self {
-        // try adopt abandoned records and use as own
-        unimplemented!()
+        // adopt abandoned records or allocate new node
+        match global.state.take_all_and_merge() {
+            Some(node) => Self(node),
+            None => Self(Default::default()),
+        }
     }
 
     #[inline]
     fn drop(self, global: &Global<Self>) {
-        if !self.0.vec.is_empty() {}
-
-        // add own records to abandoned ones
-        unimplemented!()
+        if !self.0.vec.is_empty() {
+            global.state.push(self.0);
+        }
     }
 
     #[inline]
@@ -49,6 +51,10 @@ impl RetireStrategy for LocalRetire {
         global: &Global<Self>,
         protected: &[ProtectedPtr],
     ) {
+        if let Some(node) = global.state.take_all_and_merge() {
+            self.0.merge(node.vec)
+        }
+
         self.0.vec.retain(|retired| {
             // retain (i.e. DON'T drop) all records found within the scan cache of protected hazards
             protected.binary_search_by(|&protected| retired.compare_with(protected)).is_ok()
@@ -56,8 +62,8 @@ impl RetireStrategy for LocalRetire {
     }
 
     #[inline]
-    unsafe fn retire(&mut self, global: &Global<Self>, retired: RawRetired) {
-        self.0.vec.push(unsafe { ReclaimOnDrop::new(retired) });
+    unsafe fn retire(&mut self, _: &Global<Self>, retired: RawRetired) {
+        self.0.vec.push(ReclaimOnDrop::new(retired));
     }
 }
 
