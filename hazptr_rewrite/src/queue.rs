@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 // RawNode (trait)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub trait RawNode {
+pub(crate) trait RawNode {
     unsafe fn next(node: *mut Self) -> *mut Self;
     unsafe fn set_next(node: *mut Self, next: *mut Self);
 }
@@ -17,11 +17,18 @@ pub trait RawNode {
 // AbandonedBags -> insert: Box<_>, take: Option<Box<_>> (impl Node for RetiredBag {}),
 // DynAnyNode (retired records) impl Node for *mut dyn AnyNode
 #[derive(Debug, Default)]
-pub struct RawQueue<N> {
+pub(crate) struct RawQueue<N> {
     head: AtomicPtr<N>,
 }
 
 /********** impl inherent *************************************************************************/
+
+impl<N> RawQueue<N> {
+    #[inline]
+    pub const fn new() -> Self {
+        Self { head: AtomicPtr::new(ptr::null_mut()) }
+    }
+}
 
 impl<N: RawNode> RawQueue<N> {
     #[inline]

@@ -1,35 +1,84 @@
-mod global_retire;
-mod local_retire;
+pub(crate) mod global_retire;
+pub(crate) mod local_retire;
 
-use core::fmt::Debug;
-
-use conquer_reclaim::RawRetired;
-
-use crate::hazard::ProtectedPtr;
-
-pub use self::{global_retire::GlobalRetire, local_retire::LocalRetire};
+use self::global_retire::RetiredQueue;
+use self::local_retire::{AbandonedQueue, RetireNode};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // RetireStrategy (trait)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// An internal trait for abstracting over different retire strategies.
-pub trait RetireStrategy: Debug + Default + Send + Sync + Sized + 'static {
-    /// The memory record header is dependent on the retire strategy.
-    type Header: Default + Sync + Sized;
-    /// The local state required for the given retire strategy.
-    type Local: Debug + Default + 'static;
+pub trait RetireStrategy: Sized + 'static {}
 
-    /// Creates a new strategy instance and optionally accesses the global
-    /// state.
-    fn build_local(&self) -> Self::Local;
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// GlobalRetire
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    /// Drops the strategy instance and optionally accesses the global state.
-    fn on_thread_exit(&self, local: Self::Local);
+#[derive(Copy, Clone, Debug, Default, Hash, Eq, Ord, PartialEq, PartialOrd)]
+pub struct GlobalRetire;
 
-    fn has_retired_records(&self, local: &Self::Local) -> bool;
+/********** impl RetireStrategy *******************************************************************/
 
-    unsafe fn reclaim_all_unprotected(&self, local: &mut Self::Local, protected: &[ProtectedPtr]);
+impl RetireStrategy for GlobalRetire {}
 
-    unsafe fn retire(&self, local: &mut Self::Local, retired: RawRetired);
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// GlobalRetireState
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Debug)]
+pub(crate) enum GlobalRetireState {
+    GlobalStrategy(RetiredQueue),
+    LocalStrategy(AbandonedQueue),
+}
+
+/********** impl inherent *************************************************************************/
+
+impl GlobalRetireState {
+    pub(crate) const fn global_strategy() -> Self {
+        GlobalRetireState::GlobalStrategy(RetiredQueue::new())
+    }
+
+    pub(crate) const fn local_strategy() -> Self {
+        GlobalRetireState::LocalStrategy(AbandonedQueue::new())
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// LocalRetire
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Copy, Clone, Debug, Default, Hash, Eq, Ord, PartialEq, PartialOrd)]
+pub struct LocalRetire;
+
+/********** impl RetireStrategy *******************************************************************/
+
+impl RetireStrategy for LocalRetire {}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// LocalRetireState
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Debug)]
+pub(crate) enum LocalRetireState {
+    GlobalStrategy,
+    LocalStrategy(Box<RetireNode>),
+}
+
+/********** impl From *****************************************************************************/
+
+impl From<&GlobalRetireState> for LocalRetireState {
+    #[inline]
+    fn from(retire_state: &GlobalRetireState) -> Self {
+        match retire_state {
+            GlobalRetireState::GlobalStrategy(_) => LocalRetireState::GlobalStrategy,
+            GlobalRetireState::LocalStrategy(abandoned) => {
+                // check if there are any abandoned records that can be used by
+                // the new thread instead of allocating a new local queue
+                match abandoned.take_all_and_merge() {
+                    Some(node) => LocalRetireState::LocalStrategy(node),
+                    None => LocalRetireState::LocalStrategy(Box::new(Default::default())),
+                }
+            }
+        }
+    }
 }

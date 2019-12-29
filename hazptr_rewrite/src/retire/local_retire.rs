@@ -11,68 +11,15 @@ cfg_if::cfg_if! {
 
 use conquer_reclaim::RawRetired;
 
-use crate::global::Global;
 use crate::hazard::ProtectedPtr;
 use crate::queue::{RawNode, RawQueue};
-use crate::retire::RetireStrategy;
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// LocalRetire
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#[derive(Debug, Default)]
-pub struct LocalRetire(AbandonedQueue);
-
-/********** impl RetireStrategy *******************************************************************/
-
-impl RetireStrategy for LocalRetire {
-    type Header = (); // no additional per-record state is required
-    type Local = Box<RetireNode>;
-
-    #[inline]
-    fn build_local(&self) -> Self::Local {
-        match self.0.take_all_and_merge() {
-            Some(node) => node,
-            None => Default::default(),
-        }
-    }
-
-    #[inline]
-    fn on_thread_exit(&self, local: Self::Local) {
-        if !local.vec.is_empty() {
-            self.0.push(local);
-        }
-    }
-
-    #[inline]
-    fn has_retired_records(&self, local: &Self::Local) -> bool {
-        local.vec.is_empty()
-    }
-
-    #[inline]
-    unsafe fn reclaim_all_unprotected(&self, local: &mut Self::Local, protected: &[ProtectedPtr]) {
-        if let Some(node) = self.0.take_all_and_merge() {
-            local.merge(node.vec)
-        }
-
-        local.vec.retain(|retired| {
-            // retain (i.e. DON'T drop) all records found within the scan cache of protected hazards
-            protected.binary_search_by(|&protected| retired.compare_with(protected)).is_ok()
-        });
-    }
-
-    #[inline]
-    unsafe fn retire(&self, local: &mut Self::Local, retired: RawRetired) {
-        local.vec.push(ReclaimOnDrop::new(retired));
-    }
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // RetireNode
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-pub struct RetireNode {
+pub(crate) struct RetireNode {
     vec: Vec<ReclaimOnDrop>,
     next: *mut Self,
 }
@@ -83,12 +30,35 @@ impl RetireNode {
     const DEFAULT_INITIAL_CAPACITY: usize = 128;
 
     #[inline]
-    fn merge(&mut self, mut other: Vec<ReclaimOnDrop>) {
+    pub fn into_inner(self) -> Vec<ReclaimOnDrop> {
+        self.vec
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.vec.is_empty()
+    }
+
+    #[inline]
+    pub fn merge(&mut self, mut other: Vec<ReclaimOnDrop>) {
         if (other.capacity() - other.len()) > self.vec.capacity() {
             mem::swap(&mut self.vec, &mut other);
         }
 
         self.vec.append(&mut other);
+    }
+
+    #[inline]
+    pub unsafe fn retire(&mut self, retired: RawRetired) {
+        self.vec.push(ReclaimOnDrop::new(retired));
+    }
+
+    #[inline]
+    pub unsafe fn reclaim_all_unprotected(&mut self, protected: &[ProtectedPtr]) {
+        self.vec.retain(|retired| {
+            // retain (i.e. DON'T drop) all records found within the scan cache of protected hazards
+            protected.binary_search_by(|&protected| retired.compare_with(protected)).is_ok()
+        });
     }
 }
 
@@ -118,21 +88,25 @@ impl RawNode for RetireNode {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Default)]
-pub struct AbandonedQueue {
+pub(crate) struct AbandonedQueue {
     raw: RawQueue<RetireNode>,
 }
 
 /********** impl inherent *************************************************************************/
 
 impl AbandonedQueue {
+    pub const fn new() -> Self {
+        Self { raw: RawQueue::new() }
+    }
+
     #[inline]
-    fn push(&self, node: Box<RetireNode>) {
+    pub fn push(&self, node: Box<RetireNode>) {
         let node = Box::leak(node);
         unsafe { self.raw.push(node) };
     }
 
     #[inline]
-    fn take_all_and_merge(&self) -> Option<Box<RetireNode>> {
+    pub fn take_all_and_merge(&self) -> Option<Box<RetireNode>> {
         unsafe {
             match self.raw.take_all() {
                 ptr if ptr.is_null() => None,
@@ -157,7 +131,7 @@ impl AbandonedQueue {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-struct ReclaimOnDrop(RawRetired);
+pub(crate) struct ReclaimOnDrop(RawRetired);
 
 /********** impl inherent *************************************************************************/
 

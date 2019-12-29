@@ -5,12 +5,12 @@ use conquer_once::Lazy;
 use conquer_reclaim::{BuildReclaimRef, GlobalReclaim, Reclaim, ReclaimRef, Retired};
 
 use crate::config::Config;
-use crate::global::GlobalHandle;
+use crate::global::GlobalRef;
 use crate::guard::Guard;
 use crate::local::LocalHandle;
-use crate::retire::{LocalRetire, RetireStrategy};
+use crate::retire::LocalRetire;
 
-type Local = crate::local::Local<'static, LocalRetire>;
+type Local = crate::local::Local<'static>;
 type Hp = crate::Hp<LocalRetire>;
 
 /********** globals & thread-locals ***************************************************************/
@@ -23,7 +23,7 @@ static HP: Lazy<Hp> = Lazy::new(Default::default);
 
 thread_local!(static LOCAL: Rc<Local> = {
     let config = *CONFIG.read().unwrap();
-    Rc::new(Local::new(config, GlobalHandle::from_ref(&HP.state)))
+    Rc::new(Local::new(config, GlobalRef::from_ref(&HP.state)))
 });
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -39,15 +39,15 @@ pub struct GlobalHp;
 impl GlobalReclaim for GlobalHp {
     #[inline]
     fn build_global_ref() -> Self::Ref {
-        GlobalRef
+        GlobalHpRef
     }
 }
 
 /********** impl Reclaimer ************************************************************************/
 
 unsafe impl Reclaim for GlobalHp {
-    type Header = <LocalRetire as RetireStrategy>::Header;
-    type Ref = GlobalRef;
+    type Header = <Hp as Reclaim>::Header;
+    type Ref = GlobalHpRef;
 
     #[inline]
     fn new() -> Self {
@@ -56,15 +56,15 @@ unsafe impl Reclaim for GlobalHp {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// GlobalRef
+// GlobalHpRef
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Copy, Clone, Debug, Default)]
-pub struct GlobalRef;
+pub struct GlobalHpRef;
 
 /********** impl BuildReclaimRef ******************************************************************/
 
-impl<'a> BuildReclaimRef<'a> for GlobalRef {
+impl<'a> BuildReclaimRef<'a> for GlobalHpRef {
     #[inline]
     fn from_ref(_: &'a Self::Reclaimer) -> Self {
         Self
@@ -73,8 +73,8 @@ impl<'a> BuildReclaimRef<'a> for GlobalRef {
 
 /********** impl ReclaimRef ***********************************************************************/
 
-unsafe impl ReclaimRef for GlobalRef {
-    type Guard = Guard<'static, 'static, LocalRetire, Self::Reclaimer>;
+unsafe impl ReclaimRef for GlobalHpRef {
+    type Guard = Guard<'static, 'static, Self::Reclaimer>;
     type Reclaimer = GlobalHp;
 
     #[inline]
