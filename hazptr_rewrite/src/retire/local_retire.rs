@@ -21,54 +21,49 @@ use crate::retire::RetireStrategy;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Default)]
-pub struct LocalRetire(Box<RetireNode>);
+pub struct LocalRetire(AbandonedQueue);
 
 /********** impl RetireStrategy *******************************************************************/
 
 impl RetireStrategy for LocalRetire {
-    type Global = AbandonedQueue;
     type Header = (); // no additional per-record state is required
+    type Local = Box<RetireNode>;
 
     #[inline]
-    fn new(global: &Global<Self>) -> Self {
-        // adopt abandoned records or allocate new node
-        match global.state.take_all_and_merge() {
-            Some(node) => Self(node),
-            None => Self(Default::default()),
+    fn build_local(&self) -> Self::Local {
+        match self.0.take_all_and_merge() {
+            Some(node) => node,
+            None => Default::default(),
         }
     }
 
     #[inline]
-    fn drop(self, global: &Global<Self>) {
-        if !self.0.vec.is_empty() {
-            global.state.push(self.0);
+    fn on_thread_exit(&self, local: Self::Local) {
+        if !local.vec.is_empty() {
+            self.0.push(local);
         }
     }
 
     #[inline]
-    fn no_retired_records(&self, _: &Global<Self>) -> bool {
-        self.0.vec.is_empty()
+    fn has_retired_records(&self, local: &Self::Local) -> bool {
+        local.vec.is_empty()
     }
 
     #[inline]
-    unsafe fn reclaim_all_unprotected(
-        &mut self,
-        global: &Global<Self>,
-        protected: &[ProtectedPtr],
-    ) {
-        if let Some(node) = global.state.take_all_and_merge() {
-            self.0.merge(node.vec)
+    unsafe fn reclaim_all_unprotected(&self, local: &mut Self::Local, protected: &[ProtectedPtr]) {
+        if let Some(node) = self.0.take_all_and_merge() {
+            local.merge(node.vec)
         }
 
-        self.0.vec.retain(|retired| {
+        local.vec.retain(|retired| {
             // retain (i.e. DON'T drop) all records found within the scan cache of protected hazards
             protected.binary_search_by(|&protected| retired.compare_with(protected)).is_ok()
         });
     }
 
     #[inline]
-    unsafe fn retire(&mut self, _: &Global<Self>, retired: RawRetired) {
-        self.0.vec.push(ReclaimOnDrop::new(retired));
+    unsafe fn retire(&self, local: &mut Self::Local, retired: RawRetired) {
+        local.vec.push(ReclaimOnDrop::new(retired));
     }
 }
 

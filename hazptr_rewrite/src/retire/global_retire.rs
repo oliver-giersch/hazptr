@@ -30,35 +30,29 @@ use crate::retire::RetireStrategy;
 /// It is a ZST because this strategy does not require any additional
 /// thread-local state.
 #[derive(Debug, Default)]
-pub struct GlobalRetire;
+pub struct GlobalRetire(RetiredQueue);
 
 /********** impl RetireStrategy *******************************************************************/
 
 impl RetireStrategy for GlobalRetire {
-    type Global = RetiredQueue;
     type Header = Header;
+    type Local = ();
 
     #[inline]
-    fn new(_: &Global<Self>) -> Self {
-        Self
+    fn build_local(&self) -> Self::Local {}
+
+    #[inline]
+    fn on_thread_exit(&self, _: Self::Local) {}
+
+    #[inline]
+    fn has_retired_records(&self, _: &Self::Local) -> bool {
+        self.0.raw.is_empty()
     }
 
     #[inline]
-    fn drop(self, _: &Global<Self>) {}
-
-    #[inline]
-    fn no_retired_records(&self, global: &Global<Self>) -> bool {
-        global.state.raw.is_empty()
-    }
-
-    #[inline]
-    unsafe fn reclaim_all_unprotected(
-        &mut self,
-        global: &Global<Self>,
-        protected: &[ProtectedPtr],
-    ) {
+    unsafe fn reclaim_all_unprotected(&self, _: &mut Self::Local, protected: &[ProtectedPtr]) {
         // take all retired records from the global queue
-        let mut curr = global.state.raw.take_all();
+        let mut curr = self.0.raw.take_all();
         // these variables are used to create a simple inline linked list structure
         // all records which can not be reclaimed are put back into this list and are
         // eventually pushed back into the global queue.
@@ -91,19 +85,19 @@ impl RetireStrategy for GlobalRetire {
 
         // not all records were reclaimed, push all others back into the global queue in bulk.
         if !first.is_null() {
-            global.state.raw.push_many((first, last));
+            self.0.raw.push_many((first, last));
         }
     }
 
     #[inline]
-    unsafe fn retire(&mut self, global: &Global<Self>, retired: RawRetired) {
+    unsafe fn retire(&self, _: &mut Self::Local, retired: RawRetired) {
         // retired points to a record, which have layout guarantees regarding field ordering
         // and the record's header is always first
         let header = retired.as_ptr() as *mut () as *mut Header;
         // store the retired record in the header itself, because it is necessary for later
         // reclamation
         (*header).retired = Some(retired);
-        global.state.raw.push(header);
+        self.0.raw.push(header);
     }
 }
 

@@ -9,7 +9,7 @@ use crate::retire::RetireStrategy;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-pub(crate) struct GlobalHandle<'global, S: RetireStrategy> {
+pub(crate) struct GlobalHandle<'global, S> {
     inner: GlobalRef<'global, S>,
 }
 
@@ -52,8 +52,8 @@ impl<'global, S: RetireStrategy> AsRef<Global<S>> for GlobalHandle<'global, S> {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Default)]
-pub struct Global<S: RetireStrategy> {
-    pub(crate) state: S::Global,
+pub struct Global<S> {
+    pub(crate) state: S,
     hazards: HazardList,
 }
 
@@ -95,7 +95,7 @@ impl<S: RetireStrategy> Global<S> {
 /// A reference to a [`Global`] that is either safe but lifetime-bound or unsafe
 /// and lifetime-independent (a raw pointer).
 #[derive(Debug)]
-enum GlobalRef<'a, S: RetireStrategy> {
+enum GlobalRef<'a, S> {
     Ref(&'a Global<S>),
     Raw(*const Global<S>),
 }

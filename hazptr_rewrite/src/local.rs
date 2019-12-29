@@ -172,7 +172,7 @@ const HAZARD_CACHE: usize = 16;
 struct LocalInner<'global, S: RetireStrategy> {
     config: Config,
     global: GlobalHandle<'global, S>,
-    state: ManuallyDrop<S>,
+    state: ManuallyDrop<S::Local>,
     ops_count: u32,
     hazard_cache: ArrayVec<[&'global HazardPtr; HAZARD_CACHE]>,
     scan_cache: Vec<ProtectedPtr>,
@@ -183,10 +183,12 @@ struct LocalInner<'global, S: RetireStrategy> {
 impl<'global, S: RetireStrategy> LocalInner<'global, S> {
     #[inline]
     fn new(config: Config, global: GlobalHandle<'global, S>) -> Self {
+        // todo: polymorphic behavior based on S
+        let state = ManuallyDrop::new(global.as_ref().state.build_local());
         Self {
             config,
             global,
-            state: Default::default(),
+            state,
             ops_count: Default::default(),
             hazard_cache: Default::default(),
             scan_cache: Default::default(),
@@ -200,14 +202,16 @@ impl<'global, S: RetireStrategy> LocalInner<'global, S> {
 
             if self.ops_count == self.config.ops_count_threshold {
                 self.ops_count = 0;
-                self.reclaim_all_unprotected();
+                self.try_reclaim();
             }
         }
     }
 
     #[inline]
     fn retire(&mut self, retired: RawRetired) {
-        unsafe { self.state.retire(self.global.as_ref(), retired) };
+        // todo: polymorphic behavior based on S
+        unsafe { self.global.as_ref().state.retire(&mut *self.state, retired) };
+
         if self.config.is_count_retire() {
             self.ops_count += 1;
         }
@@ -229,7 +233,7 @@ impl<'global, S: RetireStrategy> LocalInner<'global, S> {
 
     #[inline]
     fn try_recycle_hazard(&mut self, hazard: &'global HazardPtr) -> Result<(), RecycleError> {
-        // TODO: use small vec, incorporate config
+        // todo: use small vec, incorporate config?
         self.hazard_cache.try_push(hazard)?;
         hazard.set_thread_reserved(Ordering::Release);
 
@@ -237,9 +241,10 @@ impl<'global, S: RetireStrategy> LocalInner<'global, S> {
     }
 
     #[inline]
-    fn reclaim_all_unprotected(&mut self) {
+    fn try_reclaim(&mut self) {
         let global = self.global.as_ref();
-        if self.state.no_retired_records(global) {
+        // todo: polymorphic behavior based on S
+        if global.state.has_retired_records(&*self.state) {
             return;
         }
 
@@ -247,7 +252,8 @@ impl<'global, S: RetireStrategy> LocalInner<'global, S> {
         self.global.as_ref().collect_protected_hazards(&mut self.scan_cache, Ordering::SeqCst);
 
         self.scan_cache.sort_unstable();
-        unsafe { self.state.reclaim_all_unprotected(global, &self.scan_cache) };
+        // todo: polymorphic behavior based on S
+        unsafe { global.state.reclaim_all_unprotected(&mut *self.state, &self.scan_cache) };
     }
 }
 
@@ -260,11 +266,10 @@ impl<S: RetireStrategy> Drop for LocalInner<'_, S> {
             hazard.set_free(Ordering::Relaxed);
         }
 
-        // do a final reclaim attempt
+        // fixme: do a final reclaim attempt
 
         let local_state = unsafe { ptr::read(&*self.state) };
-        local_state.drop(&self.global.as_ref());
-        unimplemented!()
+        self.global.as_ref().state.on_thread_exit(local_state);
     }
 }
 

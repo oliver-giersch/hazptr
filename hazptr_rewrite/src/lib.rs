@@ -17,7 +17,7 @@ mod retire;
 use conquer_reclaim::Reclaim;
 
 pub use crate::config::{Config, ConfigBuilder, Operation};
-pub use crate::local::LocalHandle;
+pub use crate::local::{Local, LocalHandle};
 pub use crate::retire::{GlobalRetire, LocalRetire, RetireStrategy};
 
 use crate::global::{Global, GlobalHandle};
@@ -28,7 +28,7 @@ use crate::global::{Global, GlobalHandle};
 
 /// The hazard pointer memory reclamation scheme.
 #[derive(Debug)]
-pub struct Hp<S: RetireStrategy> {
+pub struct Hp<S> {
     state: Global<S>,
 }
 
@@ -36,16 +36,13 @@ pub struct Hp<S: RetireStrategy> {
 
 impl<S: RetireStrategy> Hp<S> {
     #[inline]
-    pub fn build_local_handle(&self, config: Option<Config>) -> LocalHandle<'_, '_, S> {
-        LocalHandle::new(config.unwrap_or_default(), GlobalHandle::from_ref(&self.state))
+    pub fn build_local(&self, config: Option<Config>) -> Local<S> {
+        Local::new(config.unwrap_or_default(), GlobalHandle::from_ref(&self.state))
     }
 
     #[inline]
-    pub unsafe fn build_local_handle_unchecked(
-        &self,
-        config: Option<Config>,
-    ) -> LocalHandle<'_, '_, S> {
-        LocalHandle::new(config.unwrap_or_default(), GlobalHandle::from_raw(&self.state))
+    pub unsafe fn build_local_unchecked(&self, config: Option<Config>) -> Local<'_, S> {
+        Local::new(config.unwrap_or_default(), GlobalHandle::from_raw(&self.state))
     }
 }
 
