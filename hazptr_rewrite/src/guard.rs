@@ -30,7 +30,7 @@ impl<R> Clone for Guard<'_, '_, R> {
     #[inline]
     fn clone(&self) -> Self {
         let local = self.local.clone();
-        let hazard = match unsafe { (*self.hazard).protected(Ordering::Relaxed) } {
+        let hazard = match unsafe { (*self.hazard).protected(Ordering::Relaxed).protected() } {
             Some(protected) => local.as_ref().get_hazard(ProtectStrategy::Protect(protected)),
             None => local.as_ref().get_hazard(ProtectStrategy::ReserveOnly),
         };
@@ -42,7 +42,7 @@ impl<R> Clone for Guard<'_, '_, R> {
     fn clone_from(&mut self, source: &Self) {
         unsafe {
             // TODO: is relaxed enough?
-            if let Some(protected) = (*source.hazard).protected(Ordering::Relaxed) {
+            if let Some(protected) = (*source.hazard).protected(Ordering::Relaxed).protected() {
                 (*self.hazard).set_protected(protected.into_inner(), Ordering::SeqCst);
             }
         }

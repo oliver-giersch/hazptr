@@ -7,6 +7,7 @@ pub(crate) use self::list::HazardList;
 
 const FREE: *mut () = 0 as *mut ();
 const THREAD_RESERVED: *mut () = 1 as *mut ();
+const NOT_YET_USED: *mut () = 2 as *mut ();
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // HazardPtr
@@ -42,10 +43,11 @@ impl HazardPtr {
     }
 
     #[inline]
-    pub fn protected(&self, order: Ordering) -> Option<ProtectedPtr> {
-        match NonNull::new(self.protected.load(order)) {
-            Some(ptr) if ptr.as_ptr() != THREAD_RESERVED => Some(ProtectedPtr(ptr)),
-            _ => None,
+    pub fn protected(&self, order: Ordering) -> ProtectedResult {
+        match self.protected.load(order) {
+            FREE | THREAD_RESERVED => ProtectedResult::Unprotected,
+            NOT_YET_USED => ProtectedResult::Abort,
+            ptr => ProtectedResult::Protected(ProtectedPtr(NonNull::new(ptr).unwrap())),
         }
     }
 
@@ -53,6 +55,29 @@ impl HazardPtr {
     pub fn set_protected(&self, protected: NonNull<()>, order: Ordering) {
         assert_eq!(order, Ordering::SeqCst, "this method must be sequentially consistent");
         self.protected.store(protected.as_ptr(), order);
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// ProtectedResult
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum ProtectedResult {
+    Protected(ProtectedPtr),
+    Unprotected,
+    Abort,
+}
+
+/********** impl inherent *************************************************************************/
+
+impl ProtectedResult {
+    #[inline]
+    pub fn protected(self) -> Option<ProtectedPtr> {
+        match self {
+            ProtectedResult::Protected(protected) => Some(protected),
+            _ => None,
+        }
     }
 }
 

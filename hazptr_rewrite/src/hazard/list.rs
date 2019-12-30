@@ -5,17 +5,13 @@ use core::mem::{self, MaybeUninit};
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "std")] {
-        use std::boxed::Box;
-    } else {
-        use alloc::boxed::Box;
-    }
-}
+#[cfg(not(feature = "std"))]
+use alloc::boxed::Box;
 
 use conquer_util::align::Aligned128 as CacheAligned;
 
-use crate::hazard::{HazardPtr, ProtectedPtr, FREE, THREAD_RESERVED};
+use crate::hazard::{HazardPtr, FREE, NOT_YET_USED, THREAD_RESERVED};
+use std::ptr::NonNull;
 
 /// The number of elements is chosen so that 31 hazards aligned to 128-byte and
 /// one likewise aligned next pointer fit into a 4096 byte memory page.
@@ -50,6 +46,7 @@ impl HazardList {
     /// Acquires a thread-reserved hazard pointer.
     #[cold]
     #[inline(never)]
+    #[must_use = "discarding a reserved hazard pointer without freeing it renders it unusable"]
     pub fn get_or_insert_reserved_hazard(&self) -> &HazardPtr {
         unsafe { self.get_or_insert_unchecked(THREAD_RESERVED, Ordering::Relaxed) }
     }
@@ -57,8 +54,9 @@ impl HazardList {
     /// Acquires a hazard pointer and sets it to point at `protected`.
     #[cold]
     #[inline(never)]
-    pub fn get_or_insert_hazard(&self, protected: ProtectedPtr) -> &HazardPtr {
-        unsafe { self.get_or_insert_unchecked(protected.as_const_ptr(), Ordering::SeqCst) }
+    #[must_use = "discarding a reserved hazard pointer without freeing it renders it unusable"]
+    pub fn get_or_insert_hazard(&self, protect: NonNull<()>) -> &HazardPtr {
+        unsafe { self.get_or_insert_unchecked(protect.as_ptr() as _, Ordering::SeqCst) }
     }
 
     #[inline]
@@ -67,11 +65,11 @@ impl HazardList {
     }
 
     #[inline]
-    unsafe fn get_or_insert_unchecked(&self, protected: *const (), order: Ordering) -> &HazardPtr {
+    unsafe fn get_or_insert_unchecked(&self, protect: *const (), order: Ordering) -> &HazardPtr {
         let mut prev = &self.head as *const AtomicPtr<HazardArrayNode>;
-        let mut curr = (*prev).load(Ordering::Acquire); // acquire
+        let mut curr = (*prev).load(Ordering::Acquire);
         while !curr.is_null() {
-            if let Some(hazard) = self.try_insert_in_node(curr as *const _, protected, order) {
+            if let Some(hazard) = self.try_insert_in_node(curr as *const _, protect, order) {
                 return hazard;
             }
 
@@ -79,7 +77,7 @@ impl HazardList {
             curr = (*prev).load(Ordering::Acquire);
         }
 
-        self.insert_back(prev, protected, order)
+        self.insert_back(prev, protect, order)
     }
 
     #[inline]
@@ -93,7 +91,7 @@ impl HazardList {
         while let Err(tail_node) =
             (*tail).compare_exchange(ptr::null_mut(), node, Ordering::AcqRel, Ordering::Acquire)
         {
-            // try insert in tail_node, if success return and deallocate
+            // try insert in tail node, if success return and deallocate node again
             if let Some(hazard) = self.try_insert_in_node(tail_node, protected, order) {
                 Box::from_raw(node);
                 return hazard;
@@ -114,11 +112,13 @@ impl HazardList {
     ) -> Option<&HazardPtr> {
         for element in &(*node).elements[1..] {
             let hazard = &element.aligned;
-            let success = hazard.protected.load(Ordering::Relaxed) == FREE
+            let curr = hazard.protected.load(Ordering::Relaxed);
+            let success = (curr == FREE || curr == NOT_YET_USED)
                 && hazard
                     .protected
-                    .compare_exchange(FREE, protected as *mut (), order, Ordering::Relaxed)
+                    .compare_exchange(curr, protected as *mut (), order, Ordering::Relaxed)
                     .is_ok();
+
             if success {
                 return Some(hazard);
             }
@@ -160,7 +160,9 @@ impl<'a> Iterator for Iter<'a> {
         // this loop is executed at most twice
         while let Some(node) = self.curr {
             if self.idx < ELEMENTS {
-                return Some(&node.elements[self.idx].aligned);
+                let idx = self.idx;
+                self.idx += 1;
+                return Some(&node.elements[idx].aligned);
             } else {
                 self.curr = unsafe { node.next.aligned.load(Ordering::Acquire).as_ref() };
                 self.idx = 0;
@@ -197,11 +199,62 @@ impl HazardArrayNode {
             *elem = MaybeUninit::new(CacheAligned::new(HazardPtr::new()));
         }
 
-        unsafe {
-            Self {
-                elements: mem::transmute(elements),
-                next: CacheAligned::new(AtomicPtr::default()),
-            }
+        Self {
+            elements: unsafe { mem::transmute(elements) },
+            next: CacheAligned::new(AtomicPtr::default()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::ptr::NonNull;
+    use core::sync::atomic::Ordering;
+
+    use super::{HazardList, ELEMENTS};
+
+    #[test]
+    fn new() {
+        let list = HazardList::new();
+        assert!(list.iter().next().is_none());
+    }
+
+    #[test]
+    fn insert_one() {
+        let list = HazardList::new();
+        let hazard = list.get_or_insert_reserved_hazard();
+        assert_eq!(hazard as *const _, list.iter().next().unwrap() as *const _);
+    }
+
+    #[test]
+    fn insert_full_node() {
+        let list = HazardList::new();
+
+        for _ in 0..ELEMENTS {
+            let _ = list.get_or_insert_reserved_hazard();
+        }
+
+        let vec: Vec<_> = list.iter().collect();
+        assert_eq!(vec.len(), ELEMENTS);
+    }
+
+    #[test]
+    fn insert_reserved_full_node_plus_one() {}
+
+    #[test]
+    fn insert_protected_full_node_plus_one() {
+        let list = HazardList::new();
+        let protect = NonNull::from(&mut 1);
+
+        #[allow(clippy::range_plus_one)]
+        for _ in 0..ELEMENTS + 1 {
+            let _ = list.get_or_insert_hazard(protect.cast());
+        }
+
+        let hazards: Vec<_> = list
+            .iter()
+            .take_while(|hazard| hazard.protected(Ordering::Relaxed).protected().is_some())
+            .collect();
+        assert_eq!(hazards.len(), ELEMENTS + 1);
     }
 }

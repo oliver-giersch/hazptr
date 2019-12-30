@@ -1,7 +1,7 @@
 use core::convert::AsRef;
 use core::sync::atomic::{self, Ordering};
 
-use crate::hazard::{HazardList, HazardPtr, ProtectStrategy, ProtectedPtr};
+use crate::hazard::{HazardList, HazardPtr, ProtectStrategy, ProtectedPtr, ProtectedResult};
 use crate::retire::GlobalRetireState;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -71,7 +71,9 @@ impl Global {
     pub fn get_hazard(&self, strategy: ProtectStrategy) -> &HazardPtr {
         match strategy {
             ProtectStrategy::ReserveOnly => self.hazards.get_or_insert_reserved_hazard(),
-            ProtectStrategy::Protect(protected) => self.hazards.get_or_insert_hazard(protected),
+            ProtectStrategy::Protect(protected) => {
+                self.hazards.get_or_insert_hazard(protected.into_inner())
+            }
         }
     }
 
@@ -83,8 +85,10 @@ impl Global {
         atomic::fence(Ordering::SeqCst);
 
         for hazard in self.hazards.iter() {
-            if let Some(protected) = hazard.protected(Ordering::Relaxed) {
-                vec.push(protected);
+            match hazard.protected(Ordering::Relaxed) {
+                ProtectedResult::Protected(protected) => vec.push(protected),
+                ProtectedResult::Abort => return,
+                _ => {}
             }
         }
     }
