@@ -2,7 +2,7 @@
 
 use core::iter::FusedIterator;
 use core::mem::{self, MaybeUninit};
-use core::ptr;
+use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 #[cfg(not(feature = "std"))]
@@ -11,7 +11,6 @@ use alloc::boxed::Box;
 use conquer_util::align::Aligned128 as CacheAligned;
 
 use crate::hazard::{HazardPtr, FREE, NOT_YET_USED, THREAD_RESERVED};
-use std::ptr::NonNull;
 
 /// The number of elements is chosen so that 31 hazards aligned to 128-byte and
 /// one likewise aligned next pointer fit into a 4096 byte memory page.
@@ -59,6 +58,7 @@ impl HazardList {
         unsafe { self.get_or_insert_unchecked(protect.as_ptr() as _, Ordering::SeqCst) }
     }
 
+    /// Returns an iterator over all currently allocated [`HazardPointers`].
     #[inline]
     pub fn iter(&self) -> Iter {
         Iter { idx: 0, curr: unsafe { self.head.load(Ordering::Acquire).as_ref() } }
@@ -68,7 +68,10 @@ impl HazardList {
     unsafe fn get_or_insert_unchecked(&self, protect: *const (), order: Ordering) -> &HazardPtr {
         let mut prev = &self.head as *const AtomicPtr<HazardArrayNode>;
         let mut curr = (*prev).load(Ordering::Acquire);
+        
+        // iterate the linked list of hazard nodes
         while !curr.is_null() {
+            // try to acquire a hazard pointer in the current node
             if let Some(hazard) = self.try_insert_in_node(curr as *const _, protect, order) {
                 return hazard;
             }
@@ -77,6 +80,8 @@ impl HazardList {
             curr = (*prev).load(Ordering::Acquire);
         }
 
+        // no hazard pointer could be acquired in any already allocated node, insert a new node at
+        // the tail of the list
         self.insert_back(prev, protect, order)
     }
 
@@ -87,16 +92,18 @@ impl HazardList {
         protected: *const (),
         order: Ordering,
     ) -> &HazardPtr {
+        // allocates a new hazard node with the first hazard already set to `protected`
         let node = Box::into_raw(Box::new(HazardArrayNode::new(protected)));
         while let Err(tail_node) =
             (*tail).compare_exchange(ptr::null_mut(), node, Ordering::AcqRel, Ordering::Acquire)
         {
-            // try insert in tail node, if success return and deallocate node again
+            // try insert in tail node, on success return and deallocate node again
             if let Some(hazard) = self.try_insert_in_node(tail_node, protected, order) {
                 Box::from_raw(node);
                 return hazard;
             }
 
+            // update the local tail pointer
             tail = &(*tail_node).next.aligned;
         }
 
@@ -110,15 +117,17 @@ impl HazardList {
         protected: *const (),
         order: Ordering,
     ) -> Option<&HazardPtr> {
-        for element in &(*node).elements[1..] {
+        // attempts to acquire every hazard pointer in the current `node` once
+        for element in &(*node).elements[..] {
             let hazard = &element.aligned;
-            let curr = hazard.protected.load(Ordering::Relaxed);
-            let success = (curr == FREE || curr == NOT_YET_USED)
+            let current = hazard.protected.load(Ordering::Relaxed);
+            let success = (current == FREE || current == NOT_YET_USED)
                 && hazard
                     .protected
-                    .compare_exchange(curr, protected as *mut (), order, Ordering::Relaxed)
+                    .compare_exchange(current, protected as *mut (), order, Ordering::Relaxed)
                     .is_ok();
 
+            // the hazard pointer was successfully set to `protected`
             if success {
                 return Some(hazard);
             }
@@ -212,6 +221,7 @@ mod tests {
     use core::sync::atomic::Ordering;
 
     use super::{HazardList, ELEMENTS};
+    use crate::hazard::ProtectedResult::Unprotected;
 
     #[test]
     fn new() {
@@ -239,7 +249,25 @@ mod tests {
     }
 
     #[test]
-    fn insert_reserved_full_node_plus_one() {}
+    fn insert_reserved_full_node_plus_one() {
+        let list = HazardList::new();
+
+        #[allow(clippy::range_plus_one)]
+        for _ in 0..ELEMENTS + 1 {
+            let _ = list.get_or_insert_reserved_hazard();
+        }
+
+        let hazards: Vec<_> = list.iter().collect();
+
+        assert_eq!(hazards.len(), 2 * ELEMENTS);
+        assert_eq!(
+            hazards
+                .iter()
+                .take_while(|hazard| hazard.protected(Ordering::Relaxed) == Unprotected)
+                .count(),
+            ELEMENTS + 1
+        );
+    }
 
     #[test]
     fn insert_protected_full_node_plus_one() {
