@@ -24,21 +24,16 @@ pub(crate) struct HazardPtr {
 /********** impl Hazard ***************************************************************************/
 
 impl HazardPtr {
-    #[inline]
-    pub const fn new() -> Self {
-        Self { protected: AtomicPtr::new(NOT_YET_USED) }
-    }
-
-    #[inline]
-    pub const fn with_protected(protected: *const ()) -> Self {
-        Self { protected: AtomicPtr::new(protected as *mut _) }
-    }
-
+    /// Sets the [`HazardPtr`] free meaning it can be acquired by other threads
+    /// and the previous value is no longer protected.
     #[inline]
     pub fn set_free(&self, order: Ordering) {
         self.protected.store(FREE, order);
     }
 
+    /// Sets the [`HazardPtr`] as thread-reserved meaning  the previous value is
+    /// no longer protected but the pointer is still logically owned by the
+    /// calling thread.
     #[inline]
     pub fn set_thread_reserved(&self, order: Ordering) {
         self.protected.store(THREAD_RESERVED, order);
@@ -57,6 +52,18 @@ impl HazardPtr {
     pub fn set_protected(&self, protected: NonNull<()>, order: Ordering) {
         assert_eq!(order, Ordering::SeqCst, "this method requires sequential consistency");
         self.protected.store(protected.as_ptr(), order);
+    }
+
+    /// Creates a new [`HazardPointer`].
+    #[inline]
+    const fn new() -> Self {
+        Self { protected: AtomicPtr::new(NOT_YET_USED) }
+    }
+
+    /// Creates a new [`HazardPointer`] set to initially set to `protected`.
+    #[inline]
+    const fn with_protected(protected: *const ()) -> Self {
+        Self { protected: AtomicPtr::new(protected as *mut _) }
     }
 }
 

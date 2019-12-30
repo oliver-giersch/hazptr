@@ -68,7 +68,7 @@ impl HazardList {
     unsafe fn get_or_insert_unchecked(&self, protect: *const (), order: Ordering) -> &HazardPtr {
         let mut prev = &self.head as *const AtomicPtr<HazardArrayNode>;
         let mut curr = (*prev).load(Ordering::Acquire);
-        
+
         // iterate the linked list of hazard nodes
         while !curr.is_null() {
             // try to acquire a hazard pointer in the current node
@@ -284,5 +284,22 @@ mod tests {
             .take_while(|hazard| hazard.protected(Ordering::Relaxed).protected().is_some())
             .collect();
         assert_eq!(hazards.len(), ELEMENTS + 1);
+    }
+
+    #[test]
+    fn reuse_hazard_from_list() {
+        let list = HazardList::new();
+
+        for _ in 0..ELEMENTS + (ELEMENTS / 2) {
+            let _ = list.get_or_insert_reserved_hazard();
+        }
+
+        let hazards: Vec<_> = list.iter().collect();
+
+        let inner_hazard = hazards[ELEMENTS - 2];
+        inner_hazard.set_free(Ordering::Relaxed);
+
+        let acquired_hazard = list.get_or_insert_reserved_hazard();
+        assert_eq!(inner_hazard as *const _, acquired_hazard as *const _);
     }
 }

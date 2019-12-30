@@ -21,13 +21,14 @@ pub use crate::local::{Local, LocalHandle};
 pub use crate::retire::{GlobalRetire, LocalRetire};
 
 use crate::global::{Global, GlobalRef};
+use crate::retire::global_retire::Header;
 use crate::retire::{GlobalRetireState, RetireStrategy};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Hp
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// The hazard pointer memory reclamation scheme.
+/// The global state for the hazard pointer memory reclamation scheme.
 #[derive(Debug)]
 pub struct Hp<S> {
     state: Global,
@@ -37,11 +38,30 @@ pub struct Hp<S> {
 /********** impl inherent *************************************************************************/
 
 impl<S: RetireStrategy> Hp<S> {
+    /// Builds a new instance of a [`Local`] that stores a reference (i.e.
+    /// borrows) the internal global state of `self`.
+    ///
+    /// If `config` wraps a [`Config`] instance this instance is used to
+    /// supply the [`Local`]'s internal configuration, otherwise the default
+    /// configuration is applied.
     #[inline]
     pub fn build_local(&self, config: Option<Config>) -> Local {
         Local::new(config.unwrap_or_default(), GlobalRef::from_ref(&self.state))
     }
 
+    /// Builds a new instance of a [`Local`] that stores a pointer (i.e. without
+    /// borrowing) the internal global state of `self`.
+    ///
+    /// If `config` wraps a [`Config`] instance this instance is used to
+    /// supply the [`Local`]'s internal configuration, otherwise the default
+    /// configuration is applied.
+    ///
+    /// # Safety
+    ///
+    /// The resulting [`Local`] is not lifetime-dependent on the [`Hp`] instance
+    /// it is derived from, which allows e.g. self-referential types.
+    /// The caller is required, however, to ensure that the [`Local`] instance
+    /// does not outlive `self`.
     #[inline]
     pub unsafe fn build_local_unchecked(&self, config: Option<Config>) -> Local<'_> {
         Local::new(config.unwrap_or_default(), GlobalRef::from_raw(&self.state))
@@ -73,8 +93,9 @@ impl Default for Hp<LocalRetire> {
 /********** impl Reclaim **************************************************************************/
 
 unsafe impl Reclaim for Hp<GlobalRetire> {
-    // the header type depends on the retire strategy
-    type Header = crate::retire::global_retire::Header;
+    // the global retire strategy requires each record to have a specific
+    // header.
+    type Header = Header;
     type Ref = LocalHandle<'static, 'static, Self>;
 
     #[inline]

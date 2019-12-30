@@ -36,7 +36,9 @@ use crate::queue::{RawNode, RawQueue};
 /// without concern for its concrete type.
 #[derive(Debug)]
 pub struct Header {
+    /// The pointer to the header of the next retired record.
     next: *mut Self,
+    /// The handle for the retired record itself.
     retired: Option<RawRetired>,
 }
 
@@ -61,6 +63,7 @@ impl RawNode for Header {
         (*node).next
     }
 
+    #[inline]
     unsafe fn set_next(node: *mut Self, next: *mut Self) {
         (*node).next = next;
     }
@@ -100,6 +103,8 @@ impl RetiredQueue {
     ///
     /// The caller has to ensure `retired` points at a record that has a header
     /// of the correct type.
+    /// Specifically, this requires that `retired` was derived from a
+    /// `Retired<Hp<GlobalRetire>>`.
     #[inline]
     pub unsafe fn retire(&self, retired: RawRetired) {
         // `retired` points to a record, which has layout guarantees regarding field ordering

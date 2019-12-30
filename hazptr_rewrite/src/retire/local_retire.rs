@@ -74,10 +74,12 @@ impl Default for RetireNode {
 /********** impl RawNode **************************************************************************/
 
 impl RawNode for RetireNode {
+    #[inline]
     unsafe fn next(node: *mut Self) -> *mut Self {
         (*node).next
     }
 
+    #[inline]
     unsafe fn set_next(node: *mut Self, next: *mut Self) {
         (*node).next = next;
     }
@@ -95,6 +97,7 @@ pub(crate) struct AbandonedQueue {
 /********** impl inherent *************************************************************************/
 
 impl AbandonedQueue {
+    #[inline]
     pub const fn new() -> Self {
         Self { raw: RawQueue::new() }
     }
