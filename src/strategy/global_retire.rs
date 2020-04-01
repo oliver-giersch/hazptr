@@ -14,7 +14,7 @@
 
 use core::ptr;
 
-use conquer_reclaim::RawRetired;
+use conquer_reclaim::RetiredPtr;
 
 use crate::hazard::ProtectedPtr;
 use crate::queue::{RawNode, RawQueue};
@@ -39,7 +39,7 @@ pub struct Header {
     /// The pointer to the header of the next retired record.
     next: *mut Self,
     /// The handle for the retired record itself.
-    retired: Option<RawRetired>,
+    retired: Option<RetiredPtr>,
 }
 
 /********** impl Sync *****************************************************************************/
@@ -106,10 +106,10 @@ impl RetiredQueue {
     /// Specifically, this requires that `retired` was derived from a
     /// `Retired<Hp<GlobalRetire>>`.
     #[inline]
-    pub unsafe fn retire(&self, retired: RawRetired) {
+    pub unsafe fn retire(&self, retired: RetiredPtr) {
         // `retired` points to a record, which has layout guarantees regarding field ordering
         // and the record's header is always first
-        let header = retired.as_ptr() as *mut () as *mut Header;
+        let header = retired.as_ptr() as *mut Header;
         // store the retired record in the header itself, because it is necessary for later
         // reclamation
         (*header).retired = Some(retired);

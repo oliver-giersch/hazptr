@@ -1,80 +1,79 @@
-use std::ptr::NonNull;
+use std::rc::Rc;
+use std::sync::RwLock;
 
-use reclaim::typenum::Unsigned;
-use reclaim::{GlobalReclaim, Reclaim};
+use conquer_once::Lazy;
+use conquer_reclaim::{GlobalReclaim, LocalState, Reclaim, Retired};
 
-use crate::hazard::Hazard;
-use crate::local::{Local, LocalAccess, RecycleError};
-use crate::{Unlinked, HP};
+use crate::config::Config;
+use crate::global::GlobalRef;
+use crate::guard::Guard;
+use crate::local::LocalHandle;
+use crate::strategy::LocalRetire;
 
-pub type Guard = crate::guard::Guard<DefaultAccess>;
+type Local = crate::local::Local<'static>;
+type Hp = crate::Hp<LocalRetire>;
 
-// Per-thread instances of `Local`
-thread_local!(static LOCAL: Local = Local::new());
+/********** globals & thread-locals ***************************************************************/
 
-/********** impl GlobalReclaim ********************************************************************/
+/// The global hazard pointer configuration.
+pub static CONFIG: Lazy<RwLock<Config>> = Lazy::new(RwLock::default);
 
-unsafe impl GlobalReclaim for HP {
-    type Guard = Guard;
+/// The global hazard pointer state.
+static HP: Lazy<Hp> = Lazy::new(Hp::default);
 
-    #[inline]
-    fn try_flush() {
-        LOCAL.with(Local::try_flush);
-    }
+thread_local!(static LOCAL: Rc<Local> = {
+    let config = *CONFIG.read().unwrap();
+    Rc::new(Local::new(config, GlobalRef::from_ref(&HP.state)))
+});
 
-    #[inline]
-    unsafe fn retire<T: 'static, N: Unsigned>(unlinked: Unlinked<T, N>) {
-        LOCAL.with(move |local| Self::retire_local(local, unlinked))
-    }
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// GlobalHP
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    #[inline]
-    unsafe fn retire_unchecked<T, N: Unsigned>(unlinked: Unlinked<T, N>) {
-        LOCAL.with(move |local| Self::retire_local_unchecked(local, unlinked))
+/// A handle to the global hazard pointer state.
+#[derive(Debug, Default)]
+pub struct GlobalHp;
+
+/********** impl GlobalReclaimer ******************************************************************/
+
+unsafe impl GlobalReclaim for GlobalHp {
+    fn build_local_state() -> Self::LocalState {
+        GlobalHpRef
     }
 }
 
-/********** impl inherent *************************************************************************/
+/********** impl Reclaimer ************************************************************************/
 
-impl Guard {
+impl Reclaim for GlobalHp {
+    type Guard = Guard<'static, 'static, Self>;
+    type Header = ();
+    type LocalState = GlobalHpRef;
+
     #[inline]
-    pub fn new() -> Self {
-        Self::with_access(DefaultAccess)
-    }
-}
-
-/********** impl Default **************************************************************************/
-
-impl Default for Guard {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
+    unsafe fn build_local_state(&self) -> Self::LocalState {
+        GlobalHpRef
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// DefaultAccess
+// GlobalHpRef
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Copy, Clone, Debug, Default)]
-pub struct DefaultAccess;
+pub struct GlobalHpRef;
 
-/********** impl LocalAccess **********************************************************************/
+/********** impl LocalState ***********************************************************************/
 
-impl LocalAccess for DefaultAccess {
+unsafe impl LocalState for GlobalHpRef {
+    type Reclaimer = GlobalHp;
+
     #[inline]
-    fn get_hazard(self, protect: Option<NonNull<()>>) -> &'static Hazard {
-        LOCAL.with(|local| local.get_hazard(protect))
+    fn build_guard(&self) -> <Self::Reclaimer as Reclaim>::Guard {
+        LOCAL.with(|local| Guard::with_handle(LocalHandle::from_owned(Rc::clone(local))))
     }
 
     #[inline]
-    fn try_recycle_hazard(self, hazard: &'static Hazard) -> Result<(), RecycleError> {
-        LOCAL
-            .try_with(|local| local.try_recycle_hazard(hazard))
-            .unwrap_or(Err(RecycleError::Access))
-    }
-
-    #[inline]
-    fn increase_ops_count(self) {
-        LOCAL.with(|local| local.increase_ops_count());
+    unsafe fn retire_record(&self, retired: Retired<Self::Reclaimer>) {
+        LOCAL.with(move |local| local.retire_record(retired.into_raw()))
     }
 }

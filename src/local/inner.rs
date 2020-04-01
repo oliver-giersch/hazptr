@@ -3,12 +3,12 @@ use core::ptr;
 use core::sync::atomic::Ordering;
 
 use arrayvec::{ArrayVec, CapacityError};
-use conquer_reclaim::RawRetired;
+use conquer_reclaim::RetiredPtr;
 
 use crate::config::{Config, Operation};
 use crate::global::GlobalRef;
 use crate::hazard::{HazardPtr, ProtectStrategy, ProtectedPtr};
-use crate::retire::{GlobalRetireState, LocalRetireState};
+use crate::strategy::{GlobalRetireState, LocalRetireState};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // RecycleError
@@ -72,15 +72,6 @@ impl<'global> LocalInner<'global> {
     }
 
     #[inline]
-    pub fn retire(&mut self, retired: RawRetired) {
-        unsafe { self.retire_inner(retired) };
-
-        if self.config.is_count_retire() {
-            self.ops_count += 1;
-        }
-    }
-
-    #[inline]
     pub fn get_hazard(&mut self, strategy: ProtectStrategy) -> &HazardPtr {
         match self.hazard_cache.pop() {
             Some(hazard) => {
@@ -101,6 +92,15 @@ impl<'global> LocalInner<'global> {
         hazard.set_thread_reserved(Ordering::Release);
 
         Ok(())
+    }
+
+    #[inline]
+    pub unsafe fn retire_record(&mut self, retired: RetiredPtr) {
+        unsafe { self.retire_inner(retired.into_raw()) };
+
+        if self.config.is_count_retire() {
+            self.ops_count += 1;
+        }
     }
 
     #[inline]
@@ -127,7 +127,7 @@ impl<'global> LocalInner<'global> {
     }
 
     #[inline]
-    unsafe fn retire_inner(&mut self, retired: RawRetired) {
+    unsafe fn retire_inner(&mut self, retired: RetiredPtr) {
         match &mut *self.state {
             LocalRetireState::GlobalStrategy => match &self.global.as_ref().retire_state {
                 GlobalRetireState::GlobalStrategy(queue) => queue.retire(retired),
@@ -179,12 +179,12 @@ impl Drop for LocalInner<'_> {
         // and eventually reclaim them
         let state = unsafe { ptr::read(&*self.state) };
         if let LocalRetireState::LocalStrategy(node) = state {
-            // if there are no remaining records the node can be de-allocated
-            // right away
+            // if there are no remaining records the node can be de-allocated right away
             if node.is_empty() {
                 return;
             }
 
+            // otherwise, it must be pushed to the global queue of retired records
             match &self.global.as_ref().retire_state {
                 GlobalRetireState::LocalStrategy(queue) => queue.push(node),
                 _ => unreachable!(),

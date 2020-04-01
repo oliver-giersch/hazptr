@@ -1,24 +1,3 @@
-//! Data structures and functionality for temporarily protecting specific
-//! pointers acquired by specific threads from concurrent reclamation.
-//!
-//! # Global List
-//!
-//! All hazard pointers are stored in a global linked list. This list can never
-//! remove and deallocate any of its entries, since this would require some
-//! scheme for concurrent memory reclamation on its own. Consequently, this
-//! linked list can only grow for the entire program runtime and is never
-//! actually dropped. However, its individual entries can be reused arbitrarily
-//! often.
-//!
-//! # Hazard Pointers
-//!
-//! Whenever a thread reads a value in a data structure from shared memory it
-//! has to acquire a hazard pointer for it before the loaded reference to the
-//! value can be safely dereferenced. These pointers are stored in the global
-//! list of hazard pointers. Any time a thread wants to reclaim a retired
-//! record, it has to ensure that no hazard pointer in this list still protects
-//! the retired value.
-
 mod list;
 
 use core::ptr::NonNull;
@@ -26,71 +5,101 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 pub(crate) use self::list::HazardList;
 
-const FREE: *mut () = 0 as *mut ();
-const THREAD_RESERVED: *mut () = 1 as *mut ();
+const NOT_YET_USED: *mut () = 0 as _;
+const FREE: *mut () = 1 as _;
+const THREAD_RESERVED: *mut () = 2 as _;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Hazard
+// HazardPtr
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// A pointer visible to all threads that is protected from reclamation.
+/// A pointer that must visible to all threads that indicates that the currently
+/// pointed-to value is in use by some thread and therefore protected from
+/// reclamation, i.e. it must not be de-allocated.
 #[derive(Debug)]
-pub struct Hazard {
+pub(crate) struct HazardPtr {
     protected: AtomicPtr<()>,
 }
 
-/********** impl inherent *************************************************************************/
+/********** impl Hazard ***************************************************************************/
 
-impl Hazard {
-    /// Marks the hazard as unused (available for acquisition by any thread).
+impl HazardPtr {
+    /// Sets the [`HazardPtr`] free meaning it can be acquired by other threads
+    /// and the previous value is no longer protected.
     #[inline]
     pub fn set_free(&self, order: Ordering) {
         self.protected.store(FREE, order);
     }
 
-    /// Marks the hazard as unused but reserved by a specific thread for quick
-    /// acquisition.
+    /// Sets the [`HazardPtr`] as thread-reserved meaning  the previous value is
+    /// no longer protected but the pointer is still logically owned by the
+    /// calling thread.
     #[inline]
     pub fn set_thread_reserved(&self, order: Ordering) {
         self.protected.store(THREAD_RESERVED, order);
     }
 
-    /// Gets the protected pointer, if there is one.
     #[inline]
-    pub fn protected(&self, order: Ordering) -> Option<Protected> {
+    pub fn protected(&self, order: Ordering) -> ProtectedResult {
         match self.protected.load(order) {
-            FREE | THREAD_RESERVED => None,
-            ptr => Some(Protected(unsafe { NonNull::new_unchecked(ptr) })),
+            FREE | THREAD_RESERVED => ProtectedResult::Unprotected,
+            NOT_YET_USED => ProtectedResult::Abort,
+            ptr => ProtectedResult::Protected(ProtectedPtr(NonNull::new(ptr).unwrap())),
         }
     }
 
-    /// Marks the hazard as actively protecting the given pointer `protect`.
-    ///
-    /// The ordering can be specified, but must be `SeqCst`. This is done so the
-    /// ordering is clearly specified at the call site.
-    ///
-    /// # Panics
-    ///
-    /// This operation panics if `ordering` is not `SeqCst`.
     #[inline]
-    pub fn set_protected(&self, protect: NonNull<()>, order: Ordering) {
-        assert_eq!(order, Ordering::SeqCst, "must only be called with `SeqCst`");
-        self.protected.store(protect.as_ptr(), order);
+    pub fn set_protected(&self, protected: NonNull<()>, order: Ordering) {
+        assert_eq!(order, Ordering::SeqCst, "this method requires sequential consistency");
+        self.protected.store(protected.as_ptr(), order);
     }
 
-    /// Creates new hazard for insertion in the global hazards list.
-    ///
-    /// The hazard is initially reserved for the thread initiating the request
-    /// for a hazard.
+    /// Creates a new [`HazardPointer`].
     #[inline]
-    fn new(ptr: *mut ()) -> Self {
-        debug_assert_ne!(ptr, FREE);
-        Self { protected: AtomicPtr::new(ptr) }
+    const fn new() -> Self {
+        Self { protected: AtomicPtr::new(NOT_YET_USED) }
+    }
+
+    /// Creates a new [`HazardPointer`] set to initially set to `protected`.
+    #[inline]
+    const fn with_protected(protected: *const ()) -> Self {
+        Self { protected: AtomicPtr::new(protected as *mut _) }
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Protected
+// ProtectedResult
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// The result of a call to [`protected`][HazardPtr::protected].
+#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum ProtectedResult {
+    /// Indicates that the hazard pointer currently protects some value.
+    Protected(ProtectedPtr),
+    /// Indicates that the hazard pointer currently does not protect any value.
+    Unprotected,
+    /// Indicates that hazard pointer has never been used before.
+    ///
+    /// Since hazard pointers are acquired in order this means that any
+    /// iteration of all hazard pointers can abort early, since no subsequent
+    /// hazards pointers could be in use either.
+    Abort,
+}
+
+/********** impl inherent *************************************************************************/
+
+impl ProtectedResult {
+    #[inline]
+    pub fn protected(self) -> Option<ProtectedPtr> {
+        match self {
+            ProtectedResult::Protected(protected) => Some(protected),
+            _ => None,
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// ProtectedPtr
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// An untyped pointer protected from reclamation, because it is stored within a hazard pair.
@@ -98,47 +107,49 @@ impl Hazard {
 /// The type information is deliberately stripped as it is not needed in order to determine whether
 /// a pointer is protected or not.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Protected(NonNull<()>);
+pub struct ProtectedPtr(NonNull<()>);
 
 /********** impl inherent *************************************************************************/
 
-impl Protected {
-    /// Gets the memory address of the protected pointer.
-    #[inline]
-    pub fn address(self) -> usize {
-        self.0.as_ptr() as usize
-    }
-
+impl ProtectedPtr {
     /// Gets the internal non-nullable pointer.
     #[inline]
     pub fn into_inner(self) -> NonNull<()> {
         self.0
     }
+
+    /// Gets the memory address of the [`ProtectedPtr`].
+    #[inline]
+    pub fn address(self) -> usize {
+        self.0.as_ptr() as usize
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// ProtectStrategy
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub(crate) enum ProtectStrategy {
+    ReserveOnly,
+    Protect(ProtectedPtr),
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ptr::NonNull;
-    use std::sync::atomic::Ordering;
+    use core::ptr::NonNull;
+    use core::sync::atomic::Ordering;
 
-    use super::*;
+    use super::{HazardPtr, ProtectedResult};
 
     #[test]
-    fn protect_hazard() {
-        let ptr = NonNull::from(&1);
-
-        let hazard = Hazard::new(ptr.cast().as_ptr());
-        assert_eq!(ptr.as_ptr() as usize, hazard.protected(Ordering::Relaxed).unwrap().address());
-
-        hazard.set_free(Ordering::Relaxed);
-        assert_eq!(None, hazard.protected(Ordering::Relaxed));
-        assert_eq!(FREE, hazard.protected.load(Ordering::Relaxed));
-
+    fn hazard_ptr() {
+        let hazard = HazardPtr::new();
+        assert_eq!(hazard.protected(Ordering::Relaxed), ProtectedResult::Abort);
+        hazard.set_protected(NonNull::from(&mut 1).cast(), Ordering::Relaxed);
+        assert!(hazard.protected(Ordering::Relaxed).protected().is_some());
         hazard.set_thread_reserved(Ordering::Relaxed);
-        assert_eq!(None, hazard.protected(Ordering::Relaxed));
-        assert_eq!(THREAD_RESERVED, hazard.protected.load(Ordering::Relaxed));
-
-        hazard.set_protected(ptr.cast(), Ordering::SeqCst);
-        assert_eq!(ptr.as_ptr() as usize, hazard.protected(Ordering::Relaxed).unwrap().address());
+        assert_eq!(hazard.protected(Ordering::Relaxed), ProtectedResult::Unprotected);
+        hazard.set_free(Ordering::Relaxed);
+        assert_eq!(hazard.protected(Ordering::Relaxed), ProtectedResult::Unprotected);
     }
 }

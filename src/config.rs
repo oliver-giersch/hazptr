@@ -1,20 +1,70 @@
-//! Types for global one-time configuration of the runtime parameters used by
-//! the reclamation scheme.
+const DEFAULT_SCAN_CACHE_SIZE: usize = 128;
+const DEFAULT_OPS_COUNT_THRESHOLD: u32 = 128;
+const DEFAULT_COUNT_STRATEGY: Operation = Operation::Retire;
 
-const DEFAULT_INIT_CACHE: usize = 128;
-const DEFAULT_MIN_REQUIRED_RECORDS: u32 = 0;
-const DEFAULT_SCAN_THRESHOLD: u32 = 128;
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// ConfigBuilder
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Copy, Clone, Debug, Default, Hash, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ConfigBuilder {
+    initial_scan_cache_size: Option<usize>,
+    ops_count_threshold: Option<u32>,
+    count_strategy: Option<Operation>,
+}
+
+/********** impl inherent *************************************************************************/
+
+impl ConfigBuilder {
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[inline]
+    pub fn initial_scan_cache_size(mut self, val: usize) -> Self {
+        self.initial_scan_cache_size = Some(val);
+        self
+    }
+
+    #[inline]
+    pub fn build(self) -> Config {
+        Config {
+            initial_scan_cache_size: self
+                .initial_scan_cache_size
+                .unwrap_or(DEFAULT_SCAN_CACHE_SIZE),
+            ops_count_threshold: self.ops_count_threshold.unwrap_or(DEFAULT_OPS_COUNT_THRESHOLD),
+            count_strategy: self.count_strategy.unwrap_or(DEFAULT_COUNT_STRATEGY),
+        }
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Config
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Runtime configuration parameters.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
 pub struct Config {
-    init_cache: usize,
-    min_required_records: u32,
-    scan_threshold: u32,
+    /// The initial size of the scan cache, choosing a suitably large size can
+    /// prevent re-allocations at runtime
+    pub initial_scan_cache_size: usize,
+    pub ops_count_threshold: u32,
+    pub count_strategy: Operation,
+}
+
+/********* impl inherent **************************************************************************/
+
+impl Config {
+    #[inline]
+    pub fn is_count_release(&self) -> bool {
+        self.count_strategy == Operation::Release
+    }
+
+    #[inline]
+    pub fn is_count_retire(&self) -> bool {
+        self.count_strategy == Operation::Retire
+    }
 }
 
 /********** impl Default **************************************************************************/
@@ -22,106 +72,30 @@ pub struct Config {
 impl Default for Config {
     #[inline]
     fn default() -> Self {
-        ConfigBuilder::new().build()
-    }
-}
-
-/********** impl inherent *************************************************************************/
-
-impl Config {
-    /// Creates a new [`Config`] with the given parameters
-    ///
-    /// # Panics
-    ///
-    /// This function panics, if `scan_threshold` is 0.
-    #[inline]
-    pub fn with_params(init_cache: usize, min_required_records: u32, scan_threshold: u32) -> Self {
-        assert!(scan_threshold > 0, "scan threshold must be greater than 0");
-        Self { init_cache, min_required_records, scan_threshold }
-    }
-
-    /// Returns the initial cache size for newly spawned threads.
-    #[inline]
-    pub fn init_cache(&self) -> usize {
-        self.init_cache
-    }
-
-    /// Returns the minimum amount of retired records that is required, before
-    /// an attempt at reclaiming records is initiated.
-    #[inline]
-    pub fn min_required_records(&self) -> u32 {
-        self.min_required_records
-    }
-
-    /// Returns the scan threshold.
-    ///
-    /// Every retired record or dropped hazard `Guard` (depending on which
-    /// feature is selected) counts towards this threshold.
-    /// Once it is reached, an attempt is made to reclaim records.
-    #[inline]
-    pub fn scan_threshold(&self) -> u32 {
-        self.scan_threshold
+        Self {
+            initial_scan_cache_size: DEFAULT_SCAN_CACHE_SIZE,
+            ops_count_threshold: DEFAULT_OPS_COUNT_THRESHOLD,
+            count_strategy: Default::default(),
+        }
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// ConfigBuilder
+// Operation
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// A builder type for gradually initializing a [`Config`].
-///
-/// This is mainly useful for keeping stability, in case the internal structure
-/// of the [`Config`] type changes in the future, e.g. because further
-/// parameters are added.
-#[derive(Copy, Clone, Debug, Default)]
-pub struct ConfigBuilder {
-    init_cache: Option<usize>,
-    min_required_records: Option<u32>,
-    scan_threshold: Option<u32>,
+#[derive(Copy, Clone, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum Operation {
+    Release,
+    Retire,
 }
 
-impl ConfigBuilder {
-    /// Creates a new [`ConfigBuilder`] with default values.
-    #[inline]
-    pub fn new() -> Self {
-        Self::default()
-    }
+/********** impl Default **************************************************************************/
 
-    /// Sets the initial size of the cache for retired records of each newly
-    /// created thread.
-    ///
-    /// If this is set to e.g. 0, retiring the first record will require the
-    /// allocation of memory by the internally used data structure.
+impl Default for Operation {
     #[inline]
-    pub fn init_cache(mut self, init_cache: usize) -> Self {
-        self.init_cache = Some(init_cache);
-        self
-    }
-
-    /// Sets the minimum amount of records that must have been retired by a
-    /// thread, before the thread may attempt to reclaim any memory.
-    #[inline]
-    pub fn min_required_records(mut self, min_required_records: u32) -> Self {
-        self.min_required_records = Some(min_required_records);
-        self
-    }
-
-    /// Sets the scan threshold.
-    #[inline]
-    pub fn scan_threshold(mut self, scan_threshold: u32) -> Self {
-        self.scan_threshold = Some(scan_threshold);
-        self
-    }
-
-    /// Consumes the [`ConfigBuilder`] and returns a initialized [`Config`].
-    ///
-    /// Unspecified parameters are initialized with their default values.
-    #[inline]
-    pub fn build(self) -> Config {
-        Config::with_params(
-            self.init_cache.unwrap_or(DEFAULT_INIT_CACHE),
-            self.min_required_records.unwrap_or(DEFAULT_MIN_REQUIRED_RECORDS),
-            self.scan_threshold.unwrap_or(DEFAULT_SCAN_THRESHOLD),
-        )
+    fn default() -> Self {
+        DEFAULT_COUNT_STRATEGY
     }
 }

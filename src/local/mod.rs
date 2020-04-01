@@ -13,14 +13,12 @@ cfg_if::cfg_if! {
     }
 }
 
-use conquer_reclaim::{BuildReclaimRef, RawRetired, Reclaim, ReclaimRef, Retired};
+use conquer_reclaim::{LocalState, Reclaim, Retired, RetiredPtr};
 
 use crate::config::{Config, Operation};
 use crate::global::GlobalRef;
 use crate::guard::Guard;
 use crate::hazard::{HazardPtr, ProtectStrategy};
-use crate::retire::RetireStrategy;
-use crate::Hp;
 
 use self::inner::{LocalInner, RecycleError};
 
@@ -82,41 +80,19 @@ impl<'global, R> AsRef<Local<'global>> for LocalHandle<'_, 'global, R> {
     }
 }
 
-/********** impl BuildReclaimRef ******************************************************************/
+/********** impl LocalState ***********************************************************************/
 
-impl<'global, S: RetireStrategy> BuildReclaimRef<'global> for LocalHandle<'_, 'global, Hp<S>>
-where
-    Self: 'global,
-    Hp<S>: Reclaim,
-{
-    #[inline]
-    fn from_ref(global: &'global Self::Reclaimer) -> Self {
-        Self::new(Default::default(), GlobalRef::from_ref(&global.state))
-    }
-}
-
-/********** impl ReclaimRef ***********************************************************************/
-
-unsafe impl<'local, 'global, S: RetireStrategy> ReclaimRef for LocalHandle<'local, 'global, Hp<S>>
-where
-    Hp<S>: Reclaim,
-{
-    type Guard = Guard<'local, 'global, Self::Reclaimer>;
-    type Reclaimer = Hp<S>;
+unsafe impl<R: Reclaim> LocalState for LocalHandle<'_, '_, R> {
+    type Reclaimer = R;
 
     #[inline]
-    unsafe fn from_raw(global: &Self::Reclaimer) -> Self {
-        Self::new(Default::default(), GlobalRef::from_raw(&global.state))
+    fn build_guard(&self) -> <Self::Reclaimer as Reclaim>::Guard {
+        Guard::with_handle(self.clone())
     }
 
     #[inline]
-    fn into_guard(self) -> Self::Guard {
-        Guard::with_handle(self)
-    }
-
-    #[inline]
-    unsafe fn retire(self, retired: Retired<Self::Reclaimer>) {
-        self.inner.as_ref().retire(retired.into_raw())
+    unsafe fn retire_record(&self, retired: Retired<Self::Reclaimer>) {
+        self.inner.as_ref().retire_record(retired.into_raw())
     }
 }
 
@@ -143,11 +119,6 @@ impl<'global> Local<'global> {
     }
 
     #[inline]
-    pub(crate) fn retire(&self, retired: RawRetired) {
-        unsafe { (*self.inner.get()).retire(retired) };
-    }
-
-    #[inline]
     pub(crate) fn get_hazard(&self, strategy: ProtectStrategy) -> &HazardPtr {
         unsafe { (*self.inner.get()).get_hazard(strategy) }
     }
@@ -158,6 +129,11 @@ impl<'global> Local<'global> {
         hazard: &'global HazardPtr,
     ) -> Result<(), RecycleError> {
         unsafe { (*self.inner.get()).try_recycle_hazard(hazard) }
+    }
+
+    #[inline]
+    pub(crate) unsafe fn retire_record(&self, retired: RetiredPtr) {
+        unsafe { (*self.inner.get()).retire_record(retired) };
     }
 }
 

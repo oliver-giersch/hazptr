@@ -14,33 +14,29 @@ exclude = [".travis.yml", "ci/*", "DEBUG.md"]
 [features]
 default = ["std"]
 
-# disable for use in no_std crates (for limitations see README.md)
-std = ["arrayvec/std", "conquer-once/std", "reclaim/std"]
-
-# counting towards the scan threshold caused by dropping hazard pointer guards
-count-release = []
-
-# for instrumentation with TSAN
-sanitize-threads = []
+std = ["arrayvec/std", "conquer-once/std", "conquer-reclaim/std"]
 
 [dependencies]
-cfg-if = "0.1.7"
+cfg-if = "0.1.10"
 
 [dependencies.arrayvec]
-version = "0.4.11"
+version = "0.5.1"
 default-features = false
 
 [dependencies.conquer-once]
-version = "0.1.2"
+version = "0.2.0"
 default-features = false
 
-[dependencies.reclaim]
-version = "0.2.2"
+[dependencies.conquer-reclaim]
+git = "https://github.com/oliver-giersch/conquer-reclaim"
+branch = "api_revision"
 default-features = false
 
-[dev-dependencies]
-matches = "0.1.8"
-rand = "0.6.5"
+[dependencies.conquer-util]
+# version = "0.2.0"
+git = "https://github.com/oliver-giersch/conquer-util"
+default-features = false
+features = ["align"]
 
 [[example]]
 name = "hash_set"

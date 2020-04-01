@@ -1,82 +1,107 @@
-//! Operations on globally shared data for hazard pointers and abandoned retired
-//! records.
+use core::convert::AsRef;
+use core::sync::atomic::{self, Ordering};
 
-use core::ptr::NonNull;
-use core::sync::atomic::{
-    self,
-    Ordering::{self, SeqCst},
-};
+use crate::hazard::{HazardList, HazardPtr, ProtectStrategy, ProtectedPtr, ProtectedResult};
+use crate::strategy::GlobalRetireState;
 
-#[cfg(not(feature = "std"))]
-use alloc::{boxed::Box, vec::Vec};
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// GlobalRef
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
-use crate::hazard::{Hazard, HazardList, Protected};
-use crate::retired::{AbandonedBags, RetiredBag};
-use crate::sanitize;
+#[derive(Debug)]
+pub(crate) struct GlobalRef<'global> {
+    inner: Ref<'global>,
+}
 
-/// The single static `Global` instance
-pub(crate) static GLOBAL: Global = Global::new();
+/********** impl inherent *************************************************************************/
+
+impl<'global> GlobalRef<'global> {
+    /// Creates a new [`GlobalRef`] from the reference `global` which is
+    /// consequently bound to its lifetime.
+    #[inline]
+    pub fn from_ref(global: &'global Global) -> Self {
+        Self { inner: Ref::Ref(global) }
+    }
+}
+
+impl GlobalRef<'_> {
+    /// Creates a new [`GlobalRef`] from the raw pointer `global`.
+    ///
+    /// # Safety
+    ///
+    /// The caller has to ensure that the resulting [`GlobalRef`] does not
+    /// outlive the [`Global`] it points to.
+    #[inline]
+    pub unsafe fn from_raw(global: *const Global) -> Self {
+        Self { inner: Ref::Raw(global) }
+    }
+}
+
+/********** impl AsRef ****************************************************************************/
+
+impl<'global> AsRef<Global> for GlobalRef<'global> {
+    #[inline]
+    fn as_ref(&self) -> &Global {
+        match &self.inner {
+            Ref::Ref(global) => *global,
+            Ref::Raw(ref global) => unsafe { &**global },
+        }
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Global
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Global data structures required for managing memory reclamation with hazard
-/// pointers.
 #[derive(Debug)]
 pub(crate) struct Global {
+    pub(crate) retire_state: GlobalRetireState,
     hazards: HazardList,
-    abandoned: AbandonedBags,
 }
 
 /********** impl inherent *************************************************************************/
 
 impl Global {
-    /// Creates a new instance of a `Global`.
     #[inline]
-    pub const fn new() -> Self {
-        Self { hazards: HazardList::new(), abandoned: AbandonedBags::new() }
+    pub const fn new(retire_state: GlobalRetireState) -> Self {
+        Self { retire_state, hazards: HazardList::new() }
     }
 
-    /// Acquires a hazard pointer from the global list and reserves it for the
-    /// thread requesting it.
-    ///
-    /// This operation traverses the entire list from the head, trying to find
-    /// an unused hazard.
-    /// If it does not find one, it allocates a new one and appends it to the
-    /// end of the list.
     #[inline]
-    pub fn get_hazard(&'static self, protect: Option<NonNull<()>>) -> &'static Hazard {
-        self.hazards.get_hazard(protect)
-    }
-
-    /// Collects all currently active hazard pointers into the supplied `Vec`.
-    #[inline]
-    pub fn collect_protected_hazards(&'static self, vec: &mut Vec<Protected>, order: Ordering) {
-        debug_assert_eq!(order, SeqCst, "must only be called with `SeqCst`");
-        vec.clear();
-
-        atomic::fence(order);
-
-        for hazard in self.hazards.iter().fuse() {
-            if let Some(protected) = hazard.protected(sanitize::RELAXED_LOAD) {
-                vec.push(protected);
+    pub fn get_hazard(&self, strategy: ProtectStrategy) -> &HazardPtr {
+        match strategy {
+            ProtectStrategy::ReserveOnly => self.hazards.get_or_insert_reserved_hazard(),
+            ProtectStrategy::Protect(protected) => {
+                self.hazards.get_or_insert_hazard(protected.into_inner())
             }
         }
     }
 
-    /// Stores an exiting thread's (non-empty) bag of retired records, which
-    /// could not be reclaimed at the time the thread exited.
     #[inline]
-    pub fn abandon_retired_bag(&'static self, bag: Box<RetiredBag>) {
-        debug_assert!(!bag.inner.is_empty());
-        self.abandoned.push(bag);
-    }
+    pub fn collect_protected_hazards(&self, vec: &mut Vec<ProtectedPtr>, order: Ordering) {
+        assert_eq!(order, Ordering::SeqCst, "this method must have `SeqCst` ordering");
+        vec.clear();
 
-    /// Takes and merges all abandoned records and returns them as a single
-    /// `RetiredBag`.
-    #[inline]
-    pub fn try_adopt_abandoned_records(&'static self) -> Option<Box<RetiredBag>> {
-        self.abandoned.take_and_merge()
+        atomic::fence(Ordering::SeqCst);
+
+        for hazard in self.hazards.iter() {
+            match hazard.protected(Ordering::Relaxed) {
+                ProtectedResult::Protected(protected) => vec.push(protected),
+                ProtectedResult::Abort => return,
+                _ => {}
+            }
+        }
     }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Ref
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// A reference to a [`Global`] that is either safe but lifetime-bound or unsafe
+/// and lifetime-independent (a raw pointer).
+#[derive(Debug)]
+enum Ref<'a> {
+    Ref(&'a Global),
+    Raw(*const Global),
 }
