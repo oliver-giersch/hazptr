@@ -52,7 +52,8 @@ impl RetireStrategy for GlobalRetire {}
 
 #[derive(Debug)]
 pub(crate) enum GlobalRetireState {
-    /// The [`GlobalStrategy`] requires a global queue for **all** retired records.
+    /// The [`GlobalStrategy`] requires a global queue for **all** retired
+    /// records.
     GlobalStrategy(RetiredQueue),
     /// The [`LocalStrategy`] requires a global queue **only** for abandoned
     /// records, i.e., retired records which are stored globally when a thread
@@ -63,10 +64,12 @@ pub(crate) enum GlobalRetireState {
 /********** impl inherent *************************************************************************/
 
 impl GlobalRetireState {
+    #[inline]
     pub(crate) const fn global_strategy() -> Self {
         GlobalRetireState::GlobalStrategy(RetiredQueue::new())
     }
 
+    #[inline]
     pub(crate) const fn local_strategy() -> Self {
         GlobalRetireState::LocalStrategy(AbandonedQueue::new())
     }
@@ -87,9 +90,12 @@ impl RetireStrategy for LocalRetire {}
 // LocalRetireState
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// The thread-local state required by the selected retire strategy.
 #[derive(Debug)]
 pub(crate) enum LocalRetireState<'global> {
+    /// The local state used by the global retire strategy.
     GlobalStrategy(&'global RetiredQueue),
+    /// The local state used by the local retire strategy.
     LocalStrategy(Box<RetireNode>, &'global AbandonedQueue),
 }
 

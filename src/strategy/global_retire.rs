@@ -38,13 +38,10 @@ use crate::queue::{RawNode, RawQueue};
 pub struct Header {
     /// The pointer to the header of the next retired record.
     next: *mut Self,
-    /// The handle for the retired record itself.
+    /// The handle for the retired record itself, which is set when a record is
+    /// retired.
     retired: Option<RetiredPtr>,
 }
-
-/********** impl Sync *****************************************************************************/
-
-unsafe impl Sync for Header {}
 
 /*********** impl Default *************************************************************************/
 
@@ -153,6 +150,23 @@ impl RetiredQueue {
         // not all records were reclaimed, push all others back into the global queue in bulk.
         if !first.is_null() {
             self.raw.push_many((first, last));
+        }
+    }
+}
+
+/********** impl Drop *****************************************************************************/
+
+impl Drop for RetiredQueue {
+    #[inline(never)]
+    fn drop(&mut self) {
+        // when the global state is dropped, there can be no longer any active
+        // threads and all remaining records can be simply de-allocated.
+        let mut curr = self.raw.take_all_unsync();
+        while !curr.is_null() {
+            unsafe {
+                (*curr).retired.take().unwrap().reclaim();
+                curr = Header::next(curr);
+            }
         }
     }
 }

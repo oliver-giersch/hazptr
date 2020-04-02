@@ -33,6 +33,7 @@ impl RetireNode {
     /// The initial capacity of the `Vec` of retired record pointers
     pub const DEFAULT_INITIAL_CAPACITY: usize = 128;
 
+    /// Returns the inner `Vec` of retired records.
     #[inline]
     pub fn into_inner(self) -> Vec<ReclaimOnDrop> {
         self.vec
@@ -43,6 +44,8 @@ impl RetireNode {
         self.vec.is_empty()
     }
 
+    /// Merges the node's retired records with the `Vec` of retired records
+    /// extracted from another `RetireNode`.
     #[inline]
     pub fn merge(&mut self, mut other: Vec<ReclaimOnDrop>) {
         if (other.capacity() - other.len()) > self.vec.capacity() {
@@ -61,7 +64,14 @@ impl RetireNode {
     pub unsafe fn reclaim_all_unprotected(&mut self, protected: &[ProtectedPtr]) {
         self.vec.retain(|retired| {
             // retain (i.e. DON'T drop) all records found within the scan cache of protected hazards
-            protected.binary_search_by(|&protected| retired.compare_with(protected)).is_ok()
+            let keep =
+                protected.binary_search_by(|&protected| retired.compare_with(protected)).is_ok();
+            if cfg!(debug_assertions) && !keep {
+                #[cfg(debug_assertions)]
+                retired.safe_to_drop.set(true);
+            }
+
+            keep
         });
     }
 }
@@ -133,24 +143,71 @@ impl AbandonedQueue {
     }
 }
 
+/********** impl Drop *****************************************************************************/
+
+impl Drop for AbandonedQueue {
+    #[inline(never)]
+    fn drop(&mut self) {
+        // when the global state is dropped, there can be no longer any active
+        // threads and all remaining records can be simply de-allocated.
+        let mut curr = self.raw.take_all_unsync();
+        while !curr.is_null() {
+            unsafe {
+                // the box will de-allocated together with the vector containing all retired
+                // records, which will likewise be reclaimed upon being dropped.
+                let boxed = Box::from_raw(curr);
+                #[cfg(debug_assertions)]
+                {
+                    for retired in &boxed.vec {
+                        retired.safe_to_drop.set(true);
+                    }
+                }
+                curr = boxed.next;
+            }
+        }
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // ReclaimOnDrop
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-pub(crate) struct ReclaimOnDrop(RetiredPtr);
+pub(crate) struct ReclaimOnDrop {
+    retired: RetiredPtr,
+    #[cfg(debug_assertions)]
+    safe_to_drop: core::cell::Cell<bool>,
+}
 
 /********** impl inherent *************************************************************************/
 
 impl ReclaimOnDrop {
+    /// Creates a new `ReclaimOnDrop` wrapper for the given `retired`.
+    ///
+    /// # Safety
+    ///
+    /// The returned wrapper must not be de-allocated before the reclaimer has
+    /// determined that no thread is still holding a hazard pointer for the
+    /// retired record.
+    ///
+    /// Dropping must only occur at two places:
+    /// - in the course of `RetireNode::reclaim_all_unprotected` during the call
+    ///   to `Vec::retain`.
+    /// - when the global `AbandonedQueue` is dropped will still containing
+    ///   abandoned `RetireNode`s.
     #[inline]
     unsafe fn new(retired: RetiredPtr) -> Self {
-        Self(retired)
+        Self {
+            retired,
+            #[cfg(debug_assertions)]
+            safe_to_drop: false.into(),
+        }
     }
 
+    /// Compares the address of the retired record with the `protected` address.
     #[inline]
     fn compare_with(&self, protected: ProtectedPtr) -> cmp::Ordering {
-        protected.address().cmp(&self.0.address())
+        protected.address().cmp(&self.retired.address())
     }
 }
 
@@ -159,6 +216,10 @@ impl ReclaimOnDrop {
 impl Drop for ReclaimOnDrop {
     #[inline(always)]
     fn drop(&mut self) {
-        unsafe { self.0.reclaim() };
+        #[cfg(debug_assertions)]
+        {
+            assert!(self.safe_to_drop.get());
+        }
+        unsafe { self.retired.reclaim() };
     }
 }

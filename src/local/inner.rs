@@ -97,6 +97,11 @@ impl<'global> LocalInner<'global> {
         }
     }
 
+    /// Attempts to recycle `hazard` in the local hazard pointer cache.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the local cache is full.
     #[inline]
     pub fn try_recycle_hazard(&mut self, hazard: &'global HazardPtr) -> Result<(), RecycleError> {
         self.hazard_cache.try_push(hazard)?;
@@ -164,6 +169,7 @@ impl<'global> LocalInner<'global> {
                 queue.reclaim_all_unprotected(&self.scan_cache)
             }
             LocalRetireState::LocalStrategy(local, ref queue) => {
+                // check if there are any abandoned records and adopt them into the local cache.
                 if let Some(node) = queue.take_all_and_merge() {
                     local.merge(node.into_inner())
                 }
@@ -197,7 +203,7 @@ impl Drop for LocalInner<'_> {
                 return;
             }
 
-            // ..otherwise, it is pushed to the global queue of abandoned retired records
+            // ... otherwise, it is pushed to the global queue of abandoned retired records
             queue.push(node);
         }
     }

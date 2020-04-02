@@ -96,7 +96,7 @@ impl Global {
 /// A reference to a [`Global`] that is either safe but lifetime-bound or unsafe
 /// and lifetime-independent (a raw pointer).
 #[derive(Debug)]
-enum Ref<'a> {
-    Ref(&'a Global),
+enum Ref<'global> {
+    Ref(&'global Global),
     Raw(*const Global),
 }

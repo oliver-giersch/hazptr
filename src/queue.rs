@@ -96,4 +96,9 @@ impl<N: RawNode> RawQueue<N> {
     pub fn take_all(&self) -> *mut N {
         self.head.swap(ptr::null_mut(), Ordering::Acquire)
     }
+
+    #[inline]
+    pub fn take_all_unsync(&mut self) -> *mut N {
+        self.head.swap(ptr::null_mut(), Ordering::Relaxed)
+    }
 }
