@@ -30,7 +30,8 @@ pub(crate) struct RetireNode {
 /********** impl inherent *************************************************************************/
 
 impl RetireNode {
-    const DEFAULT_INITIAL_CAPACITY: usize = 128;
+    /// The initial capacity of the `Vec` of retired record pointers
+    pub const DEFAULT_INITIAL_CAPACITY: usize = 128;
 
     #[inline]
     pub fn into_inner(self) -> Vec<ReclaimOnDrop> {

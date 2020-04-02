@@ -7,7 +7,7 @@ use conquer_reclaim::{GlobalReclaim, LocalState, Reclaim, Retired};
 use crate::config::Config;
 use crate::global::GlobalRef;
 use crate::guard::Guard;
-use crate::local::LocalHandle;
+use crate::local::LocalRef;
 use crate::strategy::LocalRetire;
 
 type Local = crate::local::Local<'static>;
@@ -69,7 +69,7 @@ unsafe impl LocalState for GlobalHpRef {
 
     #[inline]
     fn build_guard(&self) -> Self::Guard {
-        LOCAL.with(|local| Guard::with_handle(LocalHandle::from_owned(Rc::clone(local))))
+        LOCAL.with(|local| Guard::with_handle(LocalRef::from_owned(Rc::clone(local))))
     }
 
     #[inline]

@@ -4,9 +4,8 @@ use conquer_reclaim::conquer_pointer::{MarkedNonNull, MarkedPtr};
 use conquer_reclaim::typenum::Unsigned;
 use conquer_reclaim::{Atomic, NotEqual, Protect, Protected, Reclaim};
 
-use crate::config::Operation;
 use crate::hazard::{HazardPtr, ProtectStrategy};
-use crate::local::LocalHandle;
+use crate::local::LocalRef;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Guard
@@ -19,7 +18,7 @@ pub struct Guard<'local, 'global, R> {
     hazard: *const HazardPtr,
     /// Each guard contains an e.g. reference-counted local handle which is
     /// accessed when a guard is cloned or dropped.
-    local: LocalHandle<'local, 'global, R>,
+    local: LocalRef<'local, 'global, R>,
 }
 
 /********** impl Clone ****************************************************************************/
@@ -52,18 +51,14 @@ impl<R> Clone for Guard<'_, '_, R> {
 impl<'local, 'global, R> Guard<'local, 'global, R> {
     /// Creates a new guard from a `local` handle.
     #[inline]
-    pub fn with_handle(local: LocalHandle<'local, 'global, R>) -> Self {
+    pub fn with_handle(local: LocalRef<'local, 'global, R>) -> Self {
         let hazard = local.as_ref().get_hazard(ProtectStrategy::ReserveOnly);
         Self { hazard, local }
     }
 
     #[inline]
     pub fn release(&mut self) {
-        let local = self.local.as_ref();
-        if let Operation::Release = local.count_strategy() {
-            local.increase_ops_count();
-        }
-
+        self.local.as_ref().increase_ops_count_if_count_release();
         unsafe { (*self.hazard).set_thread_reserved(Ordering::Release) };
     }
 }
@@ -74,9 +69,7 @@ impl<R> Drop for Guard<'_, '_, R> {
     #[inline]
     fn drop(&mut self) {
         let local = self.local.as_ref();
-        if let Operation::Release = local.count_strategy() {
-            local.increase_ops_count();
-        }
+        local.increase_ops_count_if_count_release();
 
         let hazard = unsafe { &*self.hazard };
         if local.try_recycle_hazard(hazard).is_err() {

@@ -4,7 +4,7 @@ use core::sync::atomic::Ordering;
 use arrayvec::{ArrayVec, CapacityError};
 use conquer_reclaim::RetiredPtr;
 
-use crate::config::{Config, Operation};
+use crate::config::{Config, CountStrategy};
 use crate::global::GlobalRef;
 use crate::hazard::{HazardPtr, ProtectStrategy, ProtectedPtr};
 use crate::strategy::LocalRetireState;
@@ -69,17 +69,9 @@ impl<'global> LocalInner<'global> {
     }
 
     #[inline]
-    pub fn count_strategy(&self) -> Operation {
-        self.config.count_strategy
-    }
-
-    #[inline]
-    pub fn increase_ops_count(&mut self) {
-        self.ops_count += 1;
-
-        if self.ops_count == self.config.ops_count_threshold {
-            self.ops_count = 0;
-            self.try_reclaim();
+    pub fn increase_ops_count_if_count_release(&mut self) {
+        if let CountStrategy::Release = self.config.count_strategy {
+            self.increase_ops_count();
         }
     }
 
@@ -91,6 +83,7 @@ impl<'global> LocalInner<'global> {
     /// reserved.
     #[inline]
     pub fn get_hazard(&mut self, strategy: ProtectStrategy) -> &HazardPtr {
+        // check the local hazard cache for quick acquisition
         match self.hazard_cache.pop() {
             Some(hazard) => {
                 if let ProtectStrategy::Protect(protected) = strategy {
@@ -99,6 +92,7 @@ impl<'global> LocalInner<'global> {
 
                 hazard
             }
+            // ...otherwise acquire a hazard pointer globally
             None => self.global.as_ref().get_hazard(strategy),
         }
     }
@@ -113,10 +107,24 @@ impl<'global> LocalInner<'global> {
 
     #[inline]
     pub unsafe fn retire_record(&mut self, retired: RetiredPtr) {
+        // retire the record according to the specified retire strategy
         self.retire_inner(retired);
 
-        if let Operation::Retire = self.count_strategy() {
-            self.ops_count += 1;
+        // if the chosen config specifies retire operations to be counted, increase the ops count
+        if let CountStrategy::Retire = self.config.count_strategy {
+            self.increase_ops_count();
+        }
+    }
+
+    /// Increases the ops count and initiates a reclamation attempt if the
+    /// threshold is passed.
+    #[inline]
+    fn increase_ops_count(&mut self) {
+        self.ops_count += 1;
+
+        if self.ops_count == self.config.ops_count_threshold {
+            self.ops_count = 0;
+            self.try_reclaim();
         }
     }
 
