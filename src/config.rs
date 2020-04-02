@@ -53,20 +53,6 @@ pub struct Config {
     pub count_strategy: Operation,
 }
 
-/********* impl inherent **************************************************************************/
-
-impl Config {
-    #[inline]
-    pub fn is_count_release(&self) -> bool {
-        self.count_strategy == Operation::Release
-    }
-
-    #[inline]
-    pub fn is_count_retire(&self) -> bool {
-        self.count_strategy == Operation::Retire
-    }
-}
-
 /********** impl Default **************************************************************************/
 
 impl Default for Config {

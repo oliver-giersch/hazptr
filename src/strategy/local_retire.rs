@@ -9,7 +9,7 @@ cfg_if::cfg_if! {
     }
 }
 
-use conquer_reclaim::RawRetired;
+use conquer_reclaim::RetiredPtr;
 
 use crate::hazard::ProtectedPtr;
 use crate::queue::{RawNode, RawQueue};
@@ -18,6 +18,9 @@ use crate::queue::{RawNode, RawQueue};
 // RetireNode
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// The storage for locally retired records, which can be later stored in the
+/// global (linked list) queue of abandoned records, when the owning thread
+/// exits and there are still some un-reclaimed records present in the storage.
 #[derive(Debug)]
 pub(crate) struct RetireNode {
     vec: Vec<ReclaimOnDrop>,
@@ -49,7 +52,7 @@ impl RetireNode {
     }
 
     #[inline]
-    pub unsafe fn retire(&mut self, retired: RawRetired) {
+    pub unsafe fn retire(&mut self, retired: RetiredPtr) {
         self.vec.push(ReclaimOnDrop::new(retired));
     }
 
@@ -134,13 +137,13 @@ impl AbandonedQueue {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-pub(crate) struct ReclaimOnDrop(RawRetired);
+pub(crate) struct ReclaimOnDrop(RetiredPtr);
 
 /********** impl inherent *************************************************************************/
 
 impl ReclaimOnDrop {
     #[inline]
-    unsafe fn new(retired: RawRetired) -> Self {
+    unsafe fn new(retired: RetiredPtr) -> Self {
         Self(retired)
     }
 

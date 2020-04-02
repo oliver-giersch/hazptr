@@ -73,7 +73,7 @@ impl HazardList {
                 return hazard;
             }
 
-            prev = &(*curr).next.aligned as *const _;
+            prev = &(*curr).next as *const _;
             curr = (*prev).load(Ordering::Acquire);
         }
 
@@ -101,10 +101,10 @@ impl HazardList {
             }
 
             // update the local tail pointer
-            tail = &(*tail_node).next.aligned;
+            tail = &(*tail_node).next;
         }
 
-        &(*node).elements[0].aligned
+        &(*node).hazards[0]
     }
 
     #[inline]
@@ -115,8 +115,7 @@ impl HazardList {
         order: Ordering,
     ) -> Option<&HazardPtr> {
         // attempts to acquire every hazard pointer in the current `node` once
-        for element in &(*node).elements[..] {
-            let hazard = &element.aligned;
+        for hazard in &(*node).hazards[..] {
             let current = hazard.protected.load(Ordering::Relaxed);
 
             // if the hazard pointer is not currently in use, try to set it to `protected`
@@ -144,7 +143,7 @@ impl Drop for HazardList {
         let mut curr = self.head.load(Ordering::Relaxed);
         while !curr.is_null() {
             let node = unsafe { Box::from_raw(curr) };
-            curr = node.next.aligned.load(Ordering::Relaxed);
+            curr = node.next.load(Ordering::Relaxed);
         }
     }
 }
@@ -171,11 +170,11 @@ impl<'a> Iterator for Iter<'a> {
             if self.idx < ELEMENTS {
                 let idx = self.idx;
                 self.idx += 1;
-                return Some(&node.elements[idx].aligned);
+                return Some(&node.hazards[idx]);
             } else {
                 // set `curr` to its successor and reset iteration index to 0, the subsequent loop
                 // iteration must hence go into the first path
-                self.curr = unsafe { node.next.aligned.load(Ordering::Acquire).as_ref() };
+                self.curr = unsafe { node.next.load(Ordering::Acquire).as_ref() };
                 self.idx = 0;
             }
         }
@@ -193,7 +192,7 @@ impl FusedIterator for Iter<'_> {}
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct HazardArrayNode {
-    elements: [HazardPtr; ELEMENTS],
+    hazards: [HazardPtr; ELEMENTS],
     next: AtomicPtr<Self>,
 }
 
@@ -214,7 +213,7 @@ impl HazardArrayNode {
             elements.assume_init()
         };
 
-        Self { elements, next: AtomicPtr::default() }
+        Self { hazards: elements, next: AtomicPtr::default() }
     }
 }
 

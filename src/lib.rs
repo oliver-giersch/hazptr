@@ -93,7 +93,6 @@ impl Default for Hp<LocalRetire> {
 /********** impl Reclaim **************************************************************************/
 
 impl Reclaim for Hp<GlobalRetire> {
-    type Guard = ();
     // the global retire strategy requires each record to have a specific
     // header.
     type Header = Header;
@@ -106,7 +105,6 @@ impl Reclaim for Hp<GlobalRetire> {
 }
 
 impl Reclaim for Hp<LocalRetire> {
-    type Guard = ();
     type Header = ();
     type LocalState = LocalHandle<'static, 'static, Self>;
 

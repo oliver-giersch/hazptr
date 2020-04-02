@@ -26,6 +26,11 @@ use self::inner::{LocalInner, RecycleError};
 // LocalHandle
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A handle to the thread-local ([`Local`]) state.
+///
+/// This type abstracts over the ownership of the local state, which may either
+/// be owned through a shared pointer or borrowed through a reference or raw
+/// pointer (unsafely).
 #[derive(Debug)]
 pub struct LocalHandle<'local, 'global, R> {
     inner: Ref<'local, 'global>,
@@ -44,16 +49,26 @@ impl<R> Clone for LocalHandle<'_, '_, R> {
 /********** impl inherent *************************************************************************/
 
 impl<'global, R> LocalHandle<'_, 'global, R> {
+    /// Creates a new (owned) `Local` state instance from the supplied
+    /// arguments and returns an owning `LocalHandle` for it.
     #[inline]
     pub(crate) fn new(config: Config, global: GlobalRef<'global>) -> Self {
         Self { inner: Ref::Rc(Rc::new(Local::new(config, global))), _marker: PhantomData }
     }
 
+    /// Creates a new owning `LocalHandle` from an existing [`Rc`] (shared
+    /// pointer).
     #[inline]
     pub fn from_owned(local: Rc<Local<'global>>) -> Self {
         Self { inner: Ref::Rc(local), _marker: PhantomData }
     }
 
+    /// Creates a new borrowing `LocalHandle` from a raw pointer.
+    ///
+    /// # Safety
+    ///
+    /// The caller has to ensure the `LocalHandle` handle does not outlive the
+    /// pointed to `Local`.
     #[inline]
     pub unsafe fn from_raw(local: *const Local<'global>) -> Self {
         Self { inner: Ref::Raw(local), _marker: PhantomData }
@@ -61,6 +76,7 @@ impl<'global, R> LocalHandle<'_, 'global, R> {
 }
 
 impl<'local, 'global, R> LocalHandle<'local, 'global, R> {
+    /// Creates a new borrowing `LocalHandle` from a shared reference.
     #[inline]
     pub fn from_ref(local: &'local Local<'global>) -> Self {
         Self { inner: Ref::Ref(local), _marker: PhantomData }
@@ -82,11 +98,12 @@ impl<'global, R> AsRef<Local<'global>> for LocalHandle<'_, 'global, R> {
 
 /********** impl LocalState ***********************************************************************/
 
-unsafe impl<R: Reclaim> LocalState for LocalHandle<'_, '_, R> {
+unsafe impl<'local, 'global, R: Reclaim> LocalState for LocalHandle<'local, 'global, R> {
+    type Guard = Guard<'local, 'global, Self::Reclaimer>;
     type Reclaimer = R;
 
     #[inline]
-    fn build_guard(&self) -> <Self::Reclaimer as Reclaim>::Guard {
+    fn build_guard(&self) -> Self::Guard {
         Guard::with_handle(self.clone())
     }
 
@@ -100,6 +117,7 @@ unsafe impl<R: Reclaim> LocalState for LocalHandle<'_, '_, R> {
 // Local
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// The local state of a thread using hazard pointers.
 #[derive(Debug)]
 pub struct Local<'global> {
     inner: UnsafeCell<LocalInner<'global>>,
@@ -114,8 +132,13 @@ impl<'global> Local<'global> {
     }
 
     #[inline]
-    pub(crate) fn try_increase_ops_count(&self, op: Operation) {
-        unsafe { (*self.inner.get()).try_increase_ops_count(op) }
+    pub(crate) fn count_strategy(&self) -> Operation {
+        unsafe { (*self.inner.get()).count_strategy() }
+    }
+
+    #[inline]
+    pub(crate) fn increase_ops_count(&self) {
+        unsafe { (*self.inner.get()).increase_ops_count() }
     }
 
     #[inline]
@@ -133,7 +156,7 @@ impl<'global> Local<'global> {
 
     #[inline]
     pub(crate) unsafe fn retire_record(&self, retired: RetiredPtr) {
-        unsafe { (*self.inner.get()).retire_record(retired) };
+        (*self.inner.get()).retire_record(retired);
     }
 }
 
@@ -141,6 +164,7 @@ impl<'global> Local<'global> {
 // Ref
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// An abstraction for an owning or borrowing reference to a `Local` instance.
 #[derive(Debug)]
 enum Ref<'local, 'global> {
     Rc(Rc<Local<'global>>),

@@ -1,6 +1,6 @@
 use core::sync::atomic::Ordering;
 
-use conquer_reclaim::conquer_pointer::{MarkedNonNull, MarkedPtr, Null};
+use conquer_reclaim::conquer_pointer::{MarkedNonNull, MarkedPtr};
 use conquer_reclaim::typenum::Unsigned;
 use conquer_reclaim::{Atomic, NotEqual, Protect, Protected, Reclaim};
 
@@ -12,6 +12,7 @@ use crate::local::LocalHandle;
 // Guard
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// The [`Protect`] type representing an acquired hazard pointer.
 pub struct Guard<'local, 'global, R> {
     /// Hazards are borrowed through the local handle from global state, so they
     /// act like `'global` references.
@@ -49,6 +50,7 @@ impl<R> Clone for Guard<'_, '_, R> {
 /********** impl inherent *************************************************************************/
 
 impl<'local, 'global, R> Guard<'local, 'global, R> {
+    /// Creates a new guard from a `local` handle.
     #[inline]
     pub fn with_handle(local: LocalHandle<'local, 'global, R>) -> Self {
         let hazard = local.as_ref().get_hazard(ProtectStrategy::ReserveOnly);
@@ -57,7 +59,11 @@ impl<'local, 'global, R> Guard<'local, 'global, R> {
 
     #[inline]
     pub fn release(&mut self) {
-        self.local.as_ref().try_increase_ops_count(Operation::Release);
+        let local = self.local.as_ref();
+        if let Operation::Release = local.count_strategy() {
+            local.increase_ops_count();
+        }
+
         unsafe { (*self.hazard).set_thread_reserved(Ordering::Release) };
     }
 }
@@ -68,7 +74,10 @@ impl<R> Drop for Guard<'_, '_, R> {
     #[inline]
     fn drop(&mut self) {
         let local = self.local.as_ref();
-        local.try_increase_ops_count(Operation::Release);
+        if let Operation::Release = local.count_strategy() {
+            local.increase_ops_count();
+        }
+
         let hazard = unsafe { &*self.hazard };
         if local.try_recycle_hazard(hazard).is_err() {
             hazard.set_free(Ordering::Release);
@@ -96,7 +105,7 @@ unsafe impl<R: Reclaim> Protect for Guard<'_, '_, R> {
     ) -> Protected<T, Self::Reclaimer, N> {
         let ptr = atomic.load_raw(Ordering::Relaxed);
         match MarkedNonNull::new(ptr) {
-            Err(Null(tag)) => release!(self, ptr),
+            Err(_) => release!(self, ptr),
             Ok(ptr) => {
                 let mut protect = ptr.decompose_non_null();
                 unsafe { (*self.hazard).set_protected(protect.cast(), Ordering::SeqCst) };
@@ -104,17 +113,17 @@ unsafe impl<R: Reclaim> Protect for Guard<'_, '_, R> {
                 loop {
                     let ptr = atomic.load_raw(order);
                     match MarkedNonNull::new(ptr) {
-                        Err(Null(tag)) => return release!(self, ptr),
+                        Err(_) => return release!(self, ptr),
                         Ok(ptr) => {
-                            let compare = ptr.decompose_non_null();
-                            if protect == compare {
+                            let cmp = ptr.decompose_non_null();
+                            if protect == cmp {
+                                // safety: `ptr` is now guaranteed to be protected by the memory
+                                // reclamation scheme
                                 return unsafe { Protected::from_marked_non_null(ptr) };
                             }
 
-                            unsafe {
-                                (*self.hazard).set_protected(compare.cast(), Ordering::SeqCst)
-                            };
-                            protect = compare;
+                            unsafe { (*self.hazard).set_protected(cmp.cast(), Ordering::SeqCst) };
+                            protect = cmp;
                         }
                     }
                 }

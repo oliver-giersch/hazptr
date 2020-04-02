@@ -59,24 +59,26 @@ impl RetireStrategy for LocalRetire {}
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-pub(crate) enum LocalRetireState {
-    GlobalStrategy,
-    LocalStrategy(Box<RetireNode>),
+pub(crate) enum LocalRetireState<'global> {
+    GlobalStrategy(&'global RetiredQueue),
+    LocalStrategy(Box<RetireNode>, &'global AbandonedQueue),
 }
 
 /********** impl From *****************************************************************************/
 
-impl From<&GlobalRetireState> for LocalRetireState {
+impl<'global> From<&'global GlobalRetireState> for LocalRetireState<'global> {
     #[inline]
-    fn from(retire_state: &GlobalRetireState) -> Self {
+    fn from(retire_state: &'global GlobalRetireState) -> Self {
         match retire_state {
-            GlobalRetireState::GlobalStrategy(_) => LocalRetireState::GlobalStrategy,
+            GlobalRetireState::GlobalStrategy(queue) => LocalRetireState::GlobalStrategy(queue),
             GlobalRetireState::LocalStrategy(abandoned) => {
                 // check if there are any abandoned records that can be used by
                 // the new thread instead of allocating a new local queue
                 match abandoned.take_all_and_merge() {
-                    Some(node) => LocalRetireState::LocalStrategy(node),
-                    None => LocalRetireState::LocalStrategy(Box::new(Default::default())),
+                    Some(node) => LocalRetireState::LocalStrategy(node, abandoned),
+                    None => {
+                        LocalRetireState::LocalStrategy(Box::new(Default::default()), abandoned)
+                    }
                 }
             }
         }

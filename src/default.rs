@@ -45,7 +45,6 @@ unsafe impl GlobalReclaim for GlobalHp {
 /********** impl Reclaimer ************************************************************************/
 
 impl Reclaim for GlobalHp {
-    type Guard = Guard<'static, 'static, Self>;
     type Header = ();
     type LocalState = GlobalHpRef;
 
@@ -65,10 +64,11 @@ pub struct GlobalHpRef;
 /********** impl LocalState ***********************************************************************/
 
 unsafe impl LocalState for GlobalHpRef {
+    type Guard = Guard<'static, 'static, Self::Reclaimer>;
     type Reclaimer = GlobalHp;
 
     #[inline]
-    fn build_guard(&self) -> <Self::Reclaimer as Reclaim>::Guard {
+    fn build_guard(&self) -> Self::Guard {
         LOCAL.with(|local| Guard::with_handle(LocalHandle::from_owned(Rc::clone(local))))
     }
 

@@ -1,4 +1,3 @@
-use core::convert::AsRef;
 use core::sync::atomic::{self, Ordering};
 
 use crate::hazard::{HazardList, HazardPtr, ProtectStrategy, ProtectedPtr, ProtectedResult};
@@ -22,6 +21,14 @@ impl<'global> GlobalRef<'global> {
     pub fn from_ref(global: &'global Global) -> Self {
         Self { inner: Ref::Ref(global) }
     }
+
+    #[inline]
+    pub fn as_ref(&self) -> &'global Global {
+        match &self.inner {
+            Ref::Ref(global) => global,
+            Ref::Raw(ref global) => unsafe { &**global },
+        }
+    }
 }
 
 impl GlobalRef<'_> {
@@ -30,22 +37,10 @@ impl GlobalRef<'_> {
     /// # Safety
     ///
     /// The caller has to ensure that the resulting [`GlobalRef`] does not
-    /// outlive the [`Global`] it points to.
+    /// outlive the pointed to [`Global`].
     #[inline]
     pub unsafe fn from_raw(global: *const Global) -> Self {
         Self { inner: Ref::Raw(global) }
-    }
-}
-
-/********** impl AsRef ****************************************************************************/
-
-impl<'global> AsRef<Global> for GlobalRef<'global> {
-    #[inline]
-    fn as_ref(&self) -> &Global {
-        match &self.inner {
-            Ref::Ref(global) => *global,
-            Ref::Raw(ref global) => unsafe { &**global },
-        }
     }
 }
 
