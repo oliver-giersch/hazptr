@@ -3,7 +3,7 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
-#[cfg(feature = "std")]
+#[cfg(feature = "global")]
 mod default;
 
 mod config;
@@ -14,14 +14,18 @@ mod local;
 mod queue;
 mod strategy;
 
+pub use conquer_reclaim;
+pub use conquer_reclaim::typenum;
+
 use conquer_reclaim::Reclaim;
 
 pub use crate::config::{Config, ConfigBuilder, CountStrategy};
+#[cfg(feature = "global")]
+pub use crate::default::{build_guard, retire_record, GlobalHp, GlobalHpRef, CONFIG};
 pub use crate::local::{Local, LocalRef};
 pub use crate::strategy::{GlobalRetire, LocalRetire};
 
 use crate::global::{Global, GlobalRef};
-use crate::strategy::global_retire::Header;
 use crate::strategy::{GlobalRetireState, RetireStrategy};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -30,7 +34,7 @@ use crate::strategy::{GlobalRetireState, RetireStrategy};
 
 /// The global state for the hazard pointer memory reclamation scheme.
 #[derive(Debug)]
-pub struct Hp<S> {
+pub struct Hp<S = LocalRetire> {
     config: Config,
     state: Global,
     retire_strategy: S,
@@ -41,7 +45,7 @@ pub struct Hp<S> {
 impl Hp<GlobalRetire> {
     /// Creates a new `Hp` instance with the given `config`.
     #[inline]
-    pub fn new(config: Config) -> Self {
+    pub const fn global_retire(config: Config) -> Self {
         Self {
             config,
             state: Global::new(GlobalRetireState::global_strategy()),
@@ -53,7 +57,7 @@ impl Hp<GlobalRetire> {
 impl Hp<LocalRetire> {
     /// Creates a new `Hp` instance with the given `config`.
     #[inline]
-    pub fn new(config: Config) -> Self {
+    pub const fn local_retire(config: Config) -> Self {
         Self {
             config,
             state: Global::new(GlobalRetireState::local_strategy()),
@@ -70,7 +74,7 @@ impl<S: RetireStrategy> Hp<S> {
     /// supply the [`Local`]'s internal configuration, otherwise the default
     /// configuration is applied.
     #[inline]
-    pub fn build_local(&self, config: Option<Config>) -> Local {
+    pub fn build_local(&self, config: Option<Config>) -> Local<'_, Self> {
         Local::new(config.unwrap_or(self.config), GlobalRef::from_ref(&self.state))
     }
 
@@ -88,7 +92,7 @@ impl<S: RetireStrategy> Hp<S> {
     /// The caller is required, however, to ensure that the [`Local`] instance
     /// does not outlive `self`.
     #[inline]
-    pub unsafe fn build_local_unchecked(&self, config: Option<Config>) -> Local<'_> {
+    pub unsafe fn build_local_unchecked(&self, config: Option<Config>) -> Local<'_, Self> {
         Local::new(config.unwrap_or(self.config), GlobalRef::from_raw(&self.state))
     }
 }
@@ -120,7 +124,7 @@ impl Default for Hp<LocalRetire> {
 /********** impl Reclaim **************************************************************************/
 
 impl Reclaim for Hp<GlobalRetire> {
-    type Header = Header;
+    type Header = crate::strategy::global_retire::Header;
     type LocalState = LocalRef<'static, 'static, Self>;
 
     #[inline]

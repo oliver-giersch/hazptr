@@ -1,16 +1,4 @@
 //! Implementation of the global retire strategy.
-//!
-//! With this strategy, all threads store their retired records in a single
-//! global data structure.
-//! This means, that all threads can potentially reclaim records by all other
-//! threads, which is especially useful when only certain threads ever retire
-//! any records but all threads should be able to help in reclaiming these
-//! records.
-//! It can also be applicable if records are only retired fairly infrequently.
-//!
-//! The disadvantages for this strategy lie in the increased synchronization
-//! overhead, since every retired record requires a synchronized access to a
-//! single global shared data structure, which limits scalability.
 
 use core::ptr;
 
@@ -82,13 +70,13 @@ pub(crate) struct RetiredQueue {
 /********** impl inherent *************************************************************************/
 
 impl RetiredQueue {
-    /// Creates a new empty [`RetiredQueue`].
+    /// Creates a new empty `RetiredQueue`.
     #[inline]
     pub const fn new() -> Self {
         Self { raw: RawQueue::new() }
     }
 
-    /// Returns `true` if the [`RetiredQueue`] is empty.
+    /// Returns `true` if the queue is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.raw.is_empty()
@@ -103,7 +91,7 @@ impl RetiredQueue {
     /// Specifically, this requires that `retired` was derived from a
     /// `Retired<Hp<GlobalRetire>>`.
     #[inline]
-    pub unsafe fn retire(&self, retired: RetiredPtr) {
+    pub unsafe fn retire_record(&self, retired: RetiredPtr) {
         // `retired` points to a record, which has layout guarantees regarding field ordering
         // and the record's header is always first
         let header = retired.as_ptr() as *mut Header;
@@ -125,18 +113,18 @@ impl RetiredQueue {
         // iterate all retired records and reclaim all which are no longer protected
         while !curr.is_null() {
             let addr = curr as usize;
-            let next = (*curr).next;
+            let next = Header::next(curr);
             match protected.binary_search_by(|protected| protected.address().cmp(&addr)) {
                 // the record is still protected by some hazard pointer
                 Ok(_) => {
                     // the next pointer must be zeroed since it may still point at some record
                     // from the global queue
-                    (*curr).next = ptr::null_mut();
+                    Header::set_next(curr, ptr::null_mut());
                     if first.is_null() {
                         first = curr;
                         last = curr;
                     } else {
-                        (*last).next = curr;
+                        Header::set_next(last, curr);
                         last = curr;
                     }
                 }

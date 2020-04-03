@@ -1,4 +1,4 @@
-#![feature(test)]
+/*#![feature(test)]
 
 extern crate test;
 
@@ -76,3 +76,4 @@ fn parallel_retire(b: &mut Bencher) {
         })
         .collect();
 }
+*/

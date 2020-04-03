@@ -5,8 +5,11 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 pub(crate) use self::list::HazardList;
 
+/// State of a hazard pointer that is free and has not previously been acquired.
 const NOT_YET_USED: *mut () = 0 as _;
+/// State of a hazard pointer that is free and has previously been acquired.
 const FREE: *mut () = 1 as _;
+/// State of a hazard pointer that is reserved by a specific thread.
 const THREAD_RESERVED: *mut () = 2 as _;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -42,8 +45,8 @@ impl HazardPtr {
     #[inline]
     pub fn protected(&self, order: Ordering) -> ProtectedResult {
         match self.protected.load(order) {
-            FREE | THREAD_RESERVED => ProtectedResult::Unprotected,
             NOT_YET_USED => ProtectedResult::Abort,
+            FREE | THREAD_RESERVED => ProtectedResult::Unprotected,
             ptr => ProtectedResult::Protected(ProtectedPtr(NonNull::new(ptr).unwrap())),
         }
     }

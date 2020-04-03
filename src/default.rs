@@ -8,10 +8,9 @@ use crate::config::Config;
 use crate::global::GlobalRef;
 use crate::guard::Guard;
 use crate::local::LocalRef;
-use crate::strategy::LocalRetire;
+use crate::Hp;
 
-type Local = crate::local::Local<'static>;
-type Hp = crate::Hp<LocalRetire>;
+type Local = crate::local::Local<'static, GlobalHp>;
 
 /********** globals & thread-locals ***************************************************************/
 
@@ -19,12 +18,24 @@ type Hp = crate::Hp<LocalRetire>;
 pub static CONFIG: Lazy<RwLock<Config>> = Lazy::new(RwLock::default);
 
 /// The global hazard pointer state.
-static HP: Lazy<Hp> = Lazy::new(Hp::default);
+static HP: Hp = Hp::local_retire(Config::with_defaults());
 
 thread_local!(static LOCAL: Rc<Local> = {
     let config = *CONFIG.read().unwrap();
     Rc::new(Local::new(config, GlobalRef::from_ref(&HP.state)))
 });
+
+/********** public functions **********************************************************************/
+
+#[inline]
+pub fn build_guard() -> <GlobalHpRef as LocalState>::Guard {
+    GlobalHpRef.build_guard()
+}
+
+#[inline]
+pub unsafe fn retire_record(record: Retired<GlobalHp>) {
+    GlobalHpRef.retire_record(record);
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // GlobalHP

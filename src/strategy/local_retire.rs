@@ -39,6 +39,7 @@ impl RetireNode {
         self.vec
     }
 
+    /// Returns `true` if the `Vec` of retired records is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.vec.is_empty()
@@ -56,7 +57,7 @@ impl RetireNode {
     }
 
     #[inline]
-    pub unsafe fn retire(&mut self, retired: RetiredPtr) {
+    pub unsafe fn retire_record(&mut self, retired: RetiredPtr) {
         self.vec.push(ReclaimOnDrop::new(retired));
     }
 
@@ -64,14 +65,7 @@ impl RetireNode {
     pub unsafe fn reclaim_all_unprotected(&mut self, protected: &[ProtectedPtr]) {
         self.vec.retain(|retired| {
             // retain (i.e. DON'T drop) all records found within the scan cache of protected hazards
-            let keep =
-                protected.binary_search_by(|&protected| retired.compare_with(protected)).is_ok();
-            if cfg!(debug_assertions) && !keep {
-                #[cfg(debug_assertions)]
-                retired.safe_to_drop.set(true);
-            }
-
-            keep
+            protected.binary_search_by(|&protected| retired.compare_with(protected)).is_ok()
         });
     }
 }
@@ -156,12 +150,6 @@ impl Drop for AbandonedQueue {
                 // the box will de-allocated together with the vector containing all retired
                 // records, which will likewise be reclaimed upon being dropped.
                 let boxed = Box::from_raw(curr);
-                #[cfg(debug_assertions)]
-                {
-                    for retired in &boxed.vec {
-                        retired.safe_to_drop.set(true);
-                    }
-                }
                 curr = boxed.next;
             }
         }
@@ -175,8 +163,6 @@ impl Drop for AbandonedQueue {
 #[derive(Debug)]
 pub(crate) struct ReclaimOnDrop {
     retired: RetiredPtr,
-    #[cfg(debug_assertions)]
-    safe_to_drop: core::cell::Cell<bool>,
 }
 
 /********** impl inherent *************************************************************************/
@@ -197,11 +183,7 @@ impl ReclaimOnDrop {
     ///   abandoned `RetireNode`s.
     #[inline]
     unsafe fn new(retired: RetiredPtr) -> Self {
-        Self {
-            retired,
-            #[cfg(debug_assertions)]
-            safe_to_drop: false.into(),
-        }
+        Self { retired }
     }
 
     /// Compares the address of the retired record with the `protected` address.
@@ -216,10 +198,6 @@ impl ReclaimOnDrop {
 impl Drop for ReclaimOnDrop {
     #[inline(always)]
     fn drop(&mut self) {
-        #[cfg(debug_assertions)]
-        {
-            assert!(self.safe_to_drop.get());
-        }
         unsafe { self.retired.reclaim() };
     }
 }

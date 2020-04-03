@@ -33,7 +33,7 @@ use self::inner::{LocalInner, RecycleError};
 /// pointer (unsafely).
 #[derive(Debug)]
 pub struct LocalRef<'local, 'global, R> {
-    inner: Ref<'local, 'global>,
+    inner: Ref<'local, 'global, R>,
     _marker: PhantomData<R>,
 }
 
@@ -49,17 +49,10 @@ impl<R> Clone for LocalRef<'_, '_, R> {
 /********** impl inherent *************************************************************************/
 
 impl<'global, R> LocalRef<'_, 'global, R> {
-    /// Creates a new (owned) `Local` state instance from the supplied
-    /// arguments and returns an owning `LocalRef` for it.
-    #[inline]
-    pub(crate) fn new(config: Config, global: GlobalRef<'global>) -> Self {
-        Self { inner: Ref::Rc(Rc::new(Local::new(config, global))), _marker: PhantomData }
-    }
-
     /// Creates a new owning `LocalRef` from an existing [`Rc`] (shared
     /// pointer).
     #[inline]
-    pub fn from_owned(local: Rc<Local<'global>>) -> Self {
+    pub fn from_owned(local: Rc<Local<'global, R>>) -> Self {
         Self { inner: Ref::Rc(local), _marker: PhantomData }
     }
 
@@ -70,24 +63,31 @@ impl<'global, R> LocalRef<'_, 'global, R> {
     /// The caller has to ensure the `LocalRef` handle does not outlive the
     /// pointed to `Local`.
     #[inline]
-    pub unsafe fn from_raw(local: *const Local<'global>) -> Self {
+    pub unsafe fn from_raw(local: *const Local<'global, R>) -> Self {
         Self { inner: Ref::Raw(local), _marker: PhantomData }
+    }
+
+    /// Creates a new (owned) `Local` state instance from the supplied
+    /// arguments and returns an owning `LocalRef` for it.
+    #[inline]
+    pub(crate) fn new(config: Config, global: GlobalRef<'global>) -> Self {
+        Self { inner: Ref::Rc(Rc::new(Local::new(config, global))), _marker: PhantomData }
     }
 }
 
 impl<'local, 'global, R> LocalRef<'local, 'global, R> {
     /// Creates a new borrowing `LocalRef` from a shared reference.
     #[inline]
-    pub fn from_ref(local: &'local Local<'global>) -> Self {
+    pub fn from_ref(local: &'local Local<'global, R>) -> Self {
         Self { inner: Ref::Ref(local), _marker: PhantomData }
     }
 }
 
 /*********** impl AsRef ***************************************************************************/
 
-impl<'global, R> AsRef<Local<'global>> for LocalRef<'_, 'global, R> {
+impl<'global, R> AsRef<Local<'global, R>> for LocalRef<'_, 'global, R> {
     #[inline]
-    fn as_ref(&self) -> &Local<'global> {
+    fn as_ref(&self) -> &Local<'global, R> {
         match &self.inner {
             Ref::Rc(local) => local.as_ref(),
             Ref::Ref(local) => local,
@@ -119,16 +119,17 @@ unsafe impl<'local, 'global, R: Reclaim> LocalState for LocalRef<'local, 'global
 
 /// The local state of a thread using hazard pointers.
 #[derive(Debug)]
-pub struct Local<'global> {
+pub struct Local<'global, R> {
     inner: UnsafeCell<LocalInner<'global>>,
+    _marker: PhantomData<R>,
 }
 
 /********** impl inherent *************************************************************************/
 
-impl<'global> Local<'global> {
+impl<'global, R> Local<'global, R> {
     #[inline]
     pub(crate) fn new(config: Config, global: GlobalRef<'global>) -> Self {
-        Self { inner: UnsafeCell::new(LocalInner::new(config, global)) }
+        Self { inner: UnsafeCell::new(LocalInner::new(config, global)), _marker: PhantomData }
     }
 
     #[inline]
@@ -161,17 +162,17 @@ impl<'global> Local<'global> {
 
 /// An abstraction for an owning or borrowing reference to a `Local` instance.
 #[derive(Debug)]
-enum Ref<'local, 'global> {
-    Rc(Rc<Local<'global>>),
-    Ref(&'local Local<'global>),
-    Raw(*const Local<'global>),
+enum Ref<'local, 'global, R> {
+    Rc(Rc<Local<'global, R>>),
+    Ref(&'local Local<'global, R>),
+    Raw(*const Local<'global, R>),
 }
 
 /********** impl AsRef ****************************************************************************/
 
-impl<'global> AsRef<Local<'global>> for Ref<'_, 'global> {
+impl<'global, R> AsRef<Local<'global, R>> for Ref<'_, 'global, R> {
     #[inline]
-    fn as_ref(&self) -> &Local<'global> {
+    fn as_ref(&self) -> &Local<'global, R> {
         match self {
             Ref::Rc(local) => &**local,
             Ref::Ref(local) => *local,
@@ -182,7 +183,7 @@ impl<'global> AsRef<Local<'global>> for Ref<'_, 'global> {
 
 /********** impl Clone ****************************************************************************/
 
-impl<'local, 'global> Clone for Ref<'local, 'global> {
+impl<'local, 'global, R> Clone for Ref<'local, 'global, R> {
     #[inline]
     fn clone(&self) -> Self {
         match self {

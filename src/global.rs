@@ -22,6 +22,7 @@ impl<'global> GlobalRef<'global> {
         Self { inner: Ref::Ref(global) }
     }
 
+    /// Returns a reference to the `Global` state.
     #[inline]
     pub fn as_ref(&self) -> &'global Global {
         match &self.inner {
@@ -62,7 +63,7 @@ impl Global {
         Self { retire_state, hazards: HazardList::new() }
     }
 
-    #[inline]
+    #[cold]
     pub fn get_hazard(&self, strategy: ProtectStrategy) -> &HazardPtr {
         match strategy {
             ProtectStrategy::ReserveOnly => self.hazards.get_or_insert_reserved_hazard(),
@@ -77,6 +78,8 @@ impl Global {
         assert_eq!(order, Ordering::SeqCst, "this method must have `SeqCst` ordering");
         vec.clear();
 
+        // issue full memory fence before iterating all hazard pointers
+        // (glo:1) this seq-cst fence syncs-with the seq-cst CAS (lst:1)
         atomic::fence(Ordering::SeqCst);
 
         for hazard in self.hazards.iter() {

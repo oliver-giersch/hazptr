@@ -14,6 +14,7 @@ exclude = [".travis.yml", "ci/*", "DEBUG.md"]
 [features]
 default = ["std"]
 
+global = ["std"]
 std = ["arrayvec/std", "conquer-once/std", "conquer-reclaim/std"]
 
 [dependencies]
@@ -37,6 +38,10 @@ default-features = false
 git = "https://github.com/oliver-giersch/conquer-util"
 default-features = false
 features = ["align"]
+
+[[bench]]
+name = "guard"
+required-features = ["global"]
 
 [[example]]
 name = "hash_set"

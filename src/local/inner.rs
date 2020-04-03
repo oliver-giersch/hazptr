@@ -68,7 +68,8 @@ impl<'global> LocalInner<'global> {
         }
     }
 
-    #[inline]
+    /// Increases the ops count if the `CountStrategy` is to count on release.
+    #[inline(always)]
     pub fn increase_ops_count_if_count_release(&mut self) {
         if let CountStrategy::Release = self.config.count_strategy {
             self.increase_ops_count();
@@ -110,6 +111,13 @@ impl<'global> LocalInner<'global> {
         Ok(())
     }
 
+    /// Retires the given `retired` according to the defined retire strategy.
+    ///
+    /// # Safety
+    ///
+    /// The usual invariants for record retirement apply.
+    /// Additionally, `retired` must be derived from a `Retired<Hp<_>>` for the
+    /// correct retire strategy.
     #[inline]
     pub unsafe fn retire_record(&mut self, retired: RetiredPtr) {
         // retire the record according to the specified retire strategy
@@ -133,7 +141,7 @@ impl<'global> LocalInner<'global> {
         }
     }
 
-    #[inline]
+    #[cold]
     fn try_reclaim(&mut self) {
         // return early if no records have been retired
         if !self.has_retired_records() {
@@ -157,8 +165,8 @@ impl<'global> LocalInner<'global> {
     #[inline]
     unsafe fn retire_inner(&mut self, retired: RetiredPtr) {
         match &mut *self.state {
-            LocalRetireState::GlobalStrategy(ref queue) => queue.retire(retired),
-            LocalRetireState::LocalStrategy(node, _) => node.retire(retired),
+            LocalRetireState::GlobalStrategy(ref queue) => queue.retire_record(retired),
+            LocalRetireState::LocalStrategy(node, _) => node.retire_record(retired),
         }
     }
 

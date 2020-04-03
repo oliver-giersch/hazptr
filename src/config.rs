@@ -43,9 +43,20 @@ impl ConfigBuilder {
         self
     }
 
+    #[inline]
     pub fn set_count_strategy(mut self, val: CountStrategy) -> Self {
         self.count_strategy = Some(val);
         self
+    }
+
+    #[inline]
+    pub fn set_count_retire(self) -> Self {
+        self.set_count_strategy(CountStrategy::Retire)
+    }
+
+    #[inline]
+    pub fn set_count_release(self) -> Self {
+        self.set_count_strategy(CountStrategy::Release)
     }
 
     #[inline]
@@ -78,17 +89,26 @@ pub struct Config {
     pub count_strategy: CountStrategy,
 }
 
+/********** impl inherent *************************************************************************/
+
+impl Config {
+    #[inline]
+    pub(crate) const fn with_defaults() -> Self {
+        Self {
+            initial_scan_cache_size: DEFAULT_SCAN_CACHE_SIZE,
+            initial_retire_cache_size: DEFAULT_RETIRE_CACHE_SIZE,
+            ops_count_threshold: DEFAULT_OPS_COUNT_THRESHOLD,
+            count_strategy: DEFAULT_COUNT_STRATEGY,
+        }
+    }
+}
+
 /********** impl Default **************************************************************************/
 
 impl Default for Config {
     #[inline]
     fn default() -> Self {
-        Self {
-            initial_scan_cache_size: DEFAULT_SCAN_CACHE_SIZE,
-            initial_retire_cache_size: DEFAULT_RETIRE_CACHE_SIZE,
-            ops_count_threshold: DEFAULT_OPS_COUNT_THRESHOLD,
-            count_strategy: Default::default(),
-        }
+        Self::with_defaults()
     }
 }
 
@@ -101,13 +121,4 @@ impl Default for Config {
 pub enum CountStrategy {
     Release,
     Retire,
-}
-
-/********** impl Default **************************************************************************/
-
-impl Default for CountStrategy {
-    #[inline]
-    fn default() -> Self {
-        DEFAULT_COUNT_STRATEGY
-    }
 }

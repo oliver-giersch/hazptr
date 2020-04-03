@@ -62,11 +62,7 @@ impl<N: RawNode> RawQueue<N> {
             let head = self.head.load(Ordering::Relaxed);
             N::set_next(node, head);
 
-            if self
-                .head
-                .compare_exchange_weak(head, node, Ordering::Release, Ordering::Relaxed)
-                .is_ok()
-            {
+            if self.cas_head(head, node) {
                 return;
             }
         }
@@ -78,11 +74,7 @@ impl<N: RawNode> RawQueue<N> {
             let head = self.head.load(Ordering::Relaxed);
             N::set_next(last, head);
 
-            if self
-                .head
-                .compare_exchange_weak(head, first, Ordering::Release, Ordering::Relaxed)
-                .is_ok()
-            {
+            if self.cas_head(head, first) {
                 return;
             }
         }
@@ -100,5 +92,10 @@ impl<N: RawNode> RawQueue<N> {
     #[inline]
     pub fn take_all_unsync(&mut self) -> *mut N {
         self.head.swap(ptr::null_mut(), Ordering::Relaxed)
+    }
+
+    #[inline]
+    unsafe fn cas_head(&self, current: *mut N, new: *mut N) -> bool {
+        self.head.compare_exchange_weak(current, new, Ordering::Release, Ordering::Relaxed).is_ok()
     }
 }
