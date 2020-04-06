@@ -35,8 +35,11 @@ use crate::strategy::{GlobalRetireState, RetireStrategy};
 /// The global state for the hazard pointer memory reclamation scheme.
 #[derive(Debug)]
 pub struct Hp<S = LocalRetire> {
+    /// The reclaimer configuration.
     config: Config,
+    /// The global state.
     state: Global,
+    /// The retire strategy.
     retire_strategy: S,
 }
 
@@ -102,22 +105,14 @@ impl<S: RetireStrategy> Hp<S> {
 impl Default for Hp<GlobalRetire> {
     #[inline]
     fn default() -> Self {
-        Self {
-            config: Config::default(),
-            state: Global::new(GlobalRetireState::global_strategy()),
-            retire_strategy: GlobalRetire,
-        }
+        Self::global_retire(Config::default())
     }
 }
 
 impl Default for Hp<LocalRetire> {
     #[inline]
     fn default() -> Self {
-        Self {
-            config: Config::default(),
-            state: Global::new(GlobalRetireState::local_strategy()),
-            retire_strategy: LocalRetire,
-        }
+        Self::local_retire(Config::default())
     }
 }
 
@@ -129,7 +124,7 @@ impl Reclaim for Hp<GlobalRetire> {
 
     #[inline]
     unsafe fn build_local_state(&self) -> Self::LocalState {
-        LocalRef::new(self.config, GlobalRef::from_raw(&self.state))
+        LocalRef::owning(self.config, GlobalRef::from_raw(&self.state))
     }
 }
 
@@ -139,6 +134,6 @@ impl Reclaim for Hp<LocalRetire> {
 
     #[inline]
     unsafe fn build_local_state(&self) -> Self::LocalState {
-        LocalRef::new(self.config, GlobalRef::from_raw(&self.state))
+        LocalRef::owning(self.config, GlobalRef::from_raw(&self.state))
     }
 }

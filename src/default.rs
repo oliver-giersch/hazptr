@@ -6,10 +6,10 @@ use conquer_reclaim::{GlobalReclaim, LocalState, Reclaim, Retired};
 
 use crate::config::Config;
 use crate::global::GlobalRef;
-use crate::guard::Guard;
 use crate::local::LocalRef;
 use crate::Hp;
 
+type Guard = crate::guard::Guard<'static, 'static, GlobalHp>;
 type Local = crate::local::Local<'static, GlobalHp>;
 
 /********** globals & thread-locals ***************************************************************/
@@ -75,7 +75,7 @@ pub struct GlobalHpRef;
 /********** impl LocalState ***********************************************************************/
 
 unsafe impl LocalState for GlobalHpRef {
-    type Guard = Guard<'static, 'static, Self::Reclaimer>;
+    type Guard = Guard;
     type Reclaimer = GlobalHp;
 
     #[inline]
@@ -86,5 +86,22 @@ unsafe impl LocalState for GlobalHpRef {
     #[inline]
     unsafe fn retire_record(&self, retired: Retired<Self::Reclaimer>) {
         LOCAL.with(move |local| local.retire_record(retired.into_raw()))
+    }
+}
+
+/********** (extra) impl for Guard ****************************************************************/
+
+impl Guard {
+    /// Creates a new guard.
+    #[inline]
+    pub fn new() -> Self {
+        GlobalHpRef.build_guard()
+    }
+}
+
+impl Default for Guard {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
     }
 }

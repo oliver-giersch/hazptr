@@ -51,7 +51,9 @@ impl GlobalRef<'_> {
 
 #[derive(Debug)]
 pub(crate) struct Global {
+    /// The required global state for the chosen retire strategy.
     pub(crate) retire_state: GlobalRetireState,
+    /// The global list of all hazard pointers.
     hazards: HazardList,
 }
 
@@ -74,9 +76,10 @@ impl Global {
     }
 
     #[inline]
-    pub fn collect_protected_hazards(&self, vec: &mut Vec<ProtectedPtr>, order: Ordering) {
+    pub fn collect_protected_hazards(&self, scan_cache: &mut Vec<ProtectedPtr>, order: Ordering) {
         assert_eq!(order, Ordering::SeqCst, "this method must have `SeqCst` ordering");
-        vec.clear();
+        // clear any entries from previous reclamation attempts
+        scan_cache.clear();
 
         // issue full memory fence before iterating all hazard pointers
         // (glo:1) this seq-cst fence syncs-with the seq-cst CAS (lst:1)
@@ -84,7 +87,7 @@ impl Global {
 
         for hazard in self.hazards.iter() {
             match hazard.protected(Ordering::Relaxed) {
-                ProtectedResult::Protected(protected) => vec.push(protected),
+                ProtectedResult::Protected(protected) => scan_cache.push(protected),
                 ProtectedResult::Abort => return,
                 _ => {}
             }

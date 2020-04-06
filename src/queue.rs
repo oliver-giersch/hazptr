@@ -1,3 +1,10 @@
+/// A simple lock-free stack that uses *compare-and-swap* to insert elements at
+/// the head and *swap* (exchange) to consume all elements at once, thereby not
+/// requiring any dedicated memory reclamation mechanism.
+///
+/// The raw implementation is deliberately bare-bones as it is used in two
+/// different places for different purposes, which are added on top of the
+/// bare-bones (raw) implementation in this module.
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
@@ -43,7 +50,7 @@ pub(crate) struct RawQueue<N> {
 /********** impl inherent *************************************************************************/
 
 impl<N> RawQueue<N> {
-    /// Creates a new empty [`RawQueue`].
+    /// Creates a new empty `RawQueue`.
     #[inline]
     pub const fn new() -> Self {
         Self { head: AtomicPtr::new(ptr::null_mut()) }
@@ -51,11 +58,17 @@ impl<N> RawQueue<N> {
 }
 
 impl<N: RawNode> RawQueue<N> {
+    /// Returns `true` if the queue is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.head.load(Ordering::Relaxed).is_null()
     }
 
+    /// Pushes `node` to the head of the queue.
+    ///
+    /// # Safety
+    ///
+    /// `node` must be non-null and valid (alive and not mutably aliased).
     #[inline]
     pub unsafe fn push(&self, node: *mut N) {
         loop {
@@ -68,6 +81,14 @@ impl<N: RawNode> RawQueue<N> {
         }
     }
 
+    /// Pushes the sub-list formed by `first` and `last` to the head of the
+    /// queue
+    ///
+    /// # Safety
+    ///
+    /// `(first, last)` must form the head and the tail of a consecutively
+    /// linked sub-list.
+    /// Both must be non-null and valid.
     #[inline]
     pub unsafe fn push_many(&self, (first, last): (*mut N, *mut N)) {
         loop {
@@ -80,15 +101,17 @@ impl<N: RawNode> RawQueue<N> {
         }
     }
 
-    /// Swaps out the first node and leaves the [`RawQueue`] empty.
+    /// Swaps out the first node and leaves the `RawQueue` empty.
     ///
     /// The returned node (if it is non-`null`) effectively owns all following
-    /// nodes and can deallocate or mutate them as required.
+    /// nodes and can deallocate or mutate them as desired.
     #[inline]
     pub fn take_all(&self) -> *mut N {
         self.head.swap(ptr::null_mut(), Ordering::Acquire)
     }
 
+    /// Same as take all, but without synchronization or ordering constraints.
+    /// Requires exclusive access through the `&mut self` receiver.
     #[inline]
     pub fn take_all_unsync(&mut self) -> *mut N {
         self.head.swap(ptr::null_mut(), Ordering::Relaxed)

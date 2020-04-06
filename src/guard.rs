@@ -13,8 +13,8 @@ use crate::local::LocalRef;
 
 /// The [`Protect`] type representing an acquired hazard pointer.
 pub struct Guard<'local, 'global, R> {
-    /// Hazards are borrowed through the local handle from global state, so they
-    /// act like `'global` references.
+    /// The pointer to the acquired `HazardPtr`, the lifetime is implicitly
+    /// bound to `'global`.
     hazard: *const HazardPtr,
     /// Each guard contains an e.g. reference-counted local handle which is
     /// accessed when a guard is cloned or dropped.
@@ -38,7 +38,6 @@ impl<R> Clone for Guard<'_, '_, R> {
     #[inline]
     fn clone_from(&mut self, source: &Self) {
         unsafe {
-            // TODO: is relaxed enough?
             if let Some(protected) = (*source.hazard).protected(Ordering::Relaxed).protected() {
                 (*self.hazard).set_protected(protected.into_inner(), Ordering::SeqCst);
             }
@@ -49,13 +48,18 @@ impl<R> Clone for Guard<'_, '_, R> {
 /********** impl inherent *************************************************************************/
 
 impl<'local, 'global, R> Guard<'local, 'global, R> {
-    /// Creates a new guard from a `local` handle.
+    /// Creates a new guard from a `local` reference.
     #[inline]
     pub fn with_handle(local: LocalRef<'local, 'global, R>) -> Self {
         let hazard = local.as_ref().get_hazard(ProtectStrategy::ReserveOnly);
         Self { hazard, local }
     }
 
+    /// Releases the currently protected hazard pointer.
+    ///
+    /// A call to `release` increases the threads ops count, if the reclaimer is
+    /// configured with the [`Release`][crate::config::CountStrategy::Release]
+    /// strategy.
     #[inline]
     pub fn release(&mut self) {
         self.local.as_ref().increase_ops_count_if_count_release();
@@ -68,18 +72,19 @@ impl<'local, 'global, R> Guard<'local, 'global, R> {
 impl<R> Drop for Guard<'_, '_, R> {
     #[inline]
     fn drop(&mut self) {
-        let local = self.local.as_ref();
-        local.increase_ops_count_if_count_release();
-
-        let hazard = unsafe { &*self.hazard };
+        let (hazard, local) = (unsafe { &*self.hazard }, self.local.as_ref());
         if local.try_recycle_hazard(hazard).is_err() {
             hazard.set_free(Ordering::Release);
         }
+
+        local.increase_ops_count_if_count_release();
     }
 }
 
 /********** impl Protect **************************************************************************/
 
+/// A small short-hand for releasing the hazard pointer and returning a null
+/// pointer.
 macro_rules! release {
     ($self:ident, $ptr:expr) => {{
         $self.release();
@@ -101,9 +106,8 @@ unsafe impl<R: Reclaim> Protect for Guard<'_, '_, R> {
             Err(_) => release!(self, ptr),
             Ok(ptr) => {
                 let mut protect = ptr.decompose_non_null();
-                unsafe { (*self.hazard).set_protected(protect.cast(), Ordering::SeqCst) };
-
                 loop {
+                    unsafe { (*self.hazard).set_protected(protect.cast(), Ordering::SeqCst) };
                     let ptr = atomic.load_raw(order);
                     match MarkedNonNull::new(ptr) {
                         Err(_) => return release!(self, ptr),
@@ -115,7 +119,6 @@ unsafe impl<R: Reclaim> Protect for Guard<'_, '_, R> {
                                 return unsafe { Protected::from_marked_non_null(ptr) };
                             }
 
-                            unsafe { (*self.hazard).set_protected(cmp.cast(), Ordering::SeqCst) };
                             protect = cmp;
                         }
                     }

@@ -160,6 +160,7 @@ impl Drop for AbandonedQueue {
 // ReclaimOnDrop
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A wrapper for a `RetiredPtr` that is reclaimed when it is dropped.
 #[derive(Debug)]
 pub(crate) struct ReclaimOnDrop {
     retired: RetiredPtr,
@@ -198,6 +199,7 @@ impl ReclaimOnDrop {
 impl Drop for ReclaimOnDrop {
     #[inline(always)]
     fn drop(&mut self) {
+        // safety: This is only safe if the invariants of construction are maintained.
         unsafe { self.retired.reclaim() };
     }
 }

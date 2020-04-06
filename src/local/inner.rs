@@ -84,7 +84,7 @@ impl<'global> LocalInner<'global> {
     /// reserved.
     #[inline]
     pub fn get_hazard(&mut self, strategy: ProtectStrategy) -> &HazardPtr {
-        // check the local hazard cache for quick acquisition
+        // check the local hazard cache for fast-path acquisition
         match self.hazard_cache.pop() {
             Some(hazard) => {
                 if let ProtectStrategy::Protect(protected) = strategy {

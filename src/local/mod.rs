@@ -68,9 +68,9 @@ impl<'global, R> LocalRef<'_, 'global, R> {
     }
 
     /// Creates a new (owned) `Local` state instance from the supplied
-    /// arguments and returns an owning `LocalRef` for it.
+    /// arguments and returns an owning `LocalRef` to it.
     #[inline]
-    pub(crate) fn new(config: Config, global: GlobalRef<'global>) -> Self {
+    pub(crate) fn owning(config: Config, global: GlobalRef<'global>) -> Self {
         Self { inner: Ref::Rc(Rc::new(Local::new(config, global))), _marker: PhantomData }
     }
 }
@@ -160,7 +160,8 @@ impl<'global, R> Local<'global, R> {
 // Ref
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// An abstraction for an owning or borrowing reference to a `Local` instance.
+/// An abstraction for an owning, borrowing or raw reference to a `Local`
+/// instance.
 #[derive(Debug)]
 enum Ref<'local, 'global, R> {
     Rc(Rc<Local<'global, R>>),
