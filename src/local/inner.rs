@@ -33,7 +33,6 @@ impl From<CapacityError<&'_ HazardPtr>> for RecycleError {
 const HAZARD_CACHE: usize = 16;
 
 /// The thread-local state for using and managing hazard pointers.
-
 pub(super) struct LocalInner<'global> {
     /// The configuration used by the thread.
     config: Config,
@@ -54,10 +53,11 @@ pub(super) struct LocalInner<'global> {
 /********** impl inherent *************************************************************************/
 
 impl<'global> LocalInner<'global> {
-    /// Creates a new `LocalInner` from a `config` and a `global`.
+    /// Creates a new `LocalInner`.
     #[inline]
     pub fn new(config: Config, global: GlobalRef<'global>) -> Self {
-        let state = ManuallyDrop::new(LocalRetireState::from(&global.as_ref().retire_state));
+        let state =
+            ManuallyDrop::new(LocalRetireState::build_matching(&global.as_ref().retire_state));
         Self {
             config,
             global,
@@ -143,23 +143,42 @@ impl<'global> LocalInner<'global> {
 
     #[cold]
     fn try_reclaim(&mut self) {
-        // return early if no records have been retired
-        if !self.has_retired_records() {
-            return;
-        }
+        match &mut *self.state {
+            LocalRetireState::GlobalStrategy(ref global_queue) => {
+                // return early if the global queue is empty
+                if global_queue.is_empty() {
+                    return;
+                }
 
-        // globally collect all protected pointers into scan cache (this issues a full memory fence)
-        self.global.as_ref().collect_protected_hazards(&mut self.scan_cache, Ordering::SeqCst);
-        // reclaim all retired records that are not protected
-        unsafe { self.reclaim_all_unprotected() };
-    }
+                // it is crucial to take all currently retired records FIRST, otherwise, more
+                // records might be retired AFTER the active hazard pointers have been collected.
+                let taken = global_queue.take_all();
 
-    #[inline]
-    fn has_retired_records(&self) -> bool {
-        match &*self.state {
-            LocalRetireState::GlobalStrategy(queue) => !queue.is_empty(),
-            LocalRetireState::LocalStrategy(node, _) => !node.is_empty(),
-        }
+                // collect all protected pointers into scan cache (this issues a full memory fence)
+                self.global.as_ref().collect_hazard_pointers(&mut self.scan_cache);
+                // reclaim all unprotected records and push all others back to the global queue in bulk
+                let res = unsafe { taken.reclaim_all_unprotected(&self.scan_cache) };
+                if let Err(unreclaimed) = res {
+                    global_queue.push_back_unreclaimed(unreclaimed);
+                }
+            }
+            LocalRetireState::LocalStrategy(local_queue, ref queue) => {
+                // return early if the local vec is empty
+                if local_queue.is_empty() {
+                    return;
+                }
+
+                // check if there are any abandoned records and adopt them into the local cache.
+                if let Some(node) = queue.take_all_and_merge() {
+                    local_queue.merge(node.into_inner())
+                }
+
+                // collect all protected pointers into scan cache (this issues a full memory fence)
+                self.global.as_ref().collect_hazard_pointers(&mut self.scan_cache);
+                // reclaim all unprotected records
+                unsafe { local_queue.reclaim_all_unprotected(&self.scan_cache) }
+            }
+        };
     }
 
     #[inline]
@@ -168,25 +187,6 @@ impl<'global> LocalInner<'global> {
             LocalRetireState::GlobalStrategy(ref queue) => queue.retire_record(retired),
             LocalRetireState::LocalStrategy(node, _) => node.retire_record(retired),
         }
-    }
-
-    #[inline]
-    unsafe fn reclaim_all_unprotected(&mut self) {
-        // scan cache must be sorted for binary search
-        self.scan_cache.sort_unstable();
-        match &mut *self.state {
-            LocalRetireState::GlobalStrategy(ref queue) => {
-                queue.reclaim_all_unprotected(&self.scan_cache)
-            }
-            LocalRetireState::LocalStrategy(local, ref queue) => {
-                // check if there are any abandoned records and adopt them into the local cache.
-                if let Some(node) = queue.take_all_and_merge() {
-                    local.merge(node.into_inner())
-                }
-
-                local.reclaim_all_unprotected(&self.scan_cache)
-            }
-        };
     }
 }
 

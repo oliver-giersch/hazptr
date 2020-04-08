@@ -7,6 +7,7 @@ use crate::strategy::GlobalRetireState;
 // GlobalRef
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A reference to the `Global` state.
 pub(crate) struct GlobalRef<'global> {
     inner: Ref<'global>,
 }
@@ -48,6 +49,7 @@ impl GlobalRef<'_> {
 // Global
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// The global state for managing hazard pointers.
 pub(crate) struct Global {
     /// The required global state for the chosen retire strategy.
     pub(crate) retire_state: GlobalRetireState,
@@ -58,11 +60,13 @@ pub(crate) struct Global {
 /********** impl inherent *************************************************************************/
 
 impl Global {
+    /// Creates a new `Global`.
     #[inline]
     pub const fn new(retire_state: GlobalRetireState) -> Self {
         Self { retire_state, hazards: HazardList::new() }
     }
 
+    /// Acquires a free hazard pointer from the global list.
     #[cold]
     pub fn get_hazard(&self, strategy: ProtectStrategy) -> &HazardPtr {
         match strategy {
@@ -73,23 +77,29 @@ impl Global {
         }
     }
 
+    /// Clears the `scan_cache`, collects all active (protected) hazard pointers
+    /// into `scan_cache` and then sorts it.
     #[inline]
-    pub fn collect_protected_hazards(&self, scan_cache: &mut Vec<ProtectedPtr>, order: Ordering) {
-        debug_assert_eq!(order, Ordering::SeqCst, "this method must have `SeqCst` ordering");
+    pub fn collect_hazard_pointers(&self, scan_cache: &mut Vec<ProtectedPtr>) {
         // clear any entries from previous reclamation attempts
         scan_cache.clear();
 
-        // issue full memory fence before iterating all hazard pointers
-        // (glo:1) this seq-cst fence syncs-with the seq-cst CAS (lst:1)
+        // issue full memory fence before iterating all hazard pointers (glo:1) this seq-cst fence
+        // syncs-with the seq-cst CAS (lst:1)
         atomic::fence(Ordering::SeqCst);
 
+        // iterate all hazard pointers, collect active (protected) ones and abort if one is
+        // encountered, which can't have any active ones following it
         for hazard in self.hazards.iter() {
             match hazard.protected(Ordering::Relaxed) {
                 ProtectedResult::Protected(protected) => scan_cache.push(protected),
-                ProtectedResult::AbortIteration => return,
+                ProtectedResult::AbortIteration => break,
                 _ => {}
             }
         }
+
+        // sort the scan cache for the subsequent binary search
+        scan_cache.sort_unstable();
     }
 }
 

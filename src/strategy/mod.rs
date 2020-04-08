@@ -97,12 +97,11 @@ pub(crate) enum LocalRetireState<'global> {
     LocalStrategy(Box<RetireNode>, &'global AbandonedQueue),
 }
 
-/********** impl From *****************************************************************************/
+/********** impl inherent *************************************************************************/
 
-impl<'global> From<&'global GlobalRetireState> for LocalRetireState<'global> {
-    #[inline]
-    fn from(retire_state: &'global GlobalRetireState) -> Self {
-        match retire_state {
+impl<'global> LocalRetireState<'global> {
+    pub(crate) fn build_matching(global_state: &'global GlobalRetireState) -> Self {
+        match global_state {
             GlobalRetireState::GlobalStrategy(queue) => LocalRetireState::GlobalStrategy(queue),
             GlobalRetireState::LocalStrategy(abandoned) => {
                 // check if there are any abandoned records that can be used by the new thread

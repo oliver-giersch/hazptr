@@ -83,6 +83,16 @@ impl RetiredQueue {
         self.raw.is_empty()
     }
 
+    #[inline]
+    pub fn take_all(&self) -> Taken {
+        Taken { curr: self.raw.take_all() }
+    }
+
+    #[inline]
+    pub fn push_back_unreclaimed(&self, unreclaimed: Unreclaimed) {
+        unsafe { self.raw.push_many((unreclaimed.first, unreclaimed.last)) };
+    }
+
     /// Pushes `retired` into the queue.
     ///
     /// # Safety
@@ -100,48 +110,6 @@ impl RetiredQueue {
 
         self.raw.push(header);
     }
-
-    #[inline]
-    pub unsafe fn reclaim_all_unprotected(&self, scan_cache: &[ProtectedPtr]) {
-        // take all retired records from the global queue
-        let mut curr = self.raw.take_all();
-        // these pointers are used to form a simple inline singly linked list structure of all
-        // records which can NOT yet be reclaimed and have to be pushed back into the global queue.
-        let (mut first, mut last): (*mut Header, *mut Header) = (ptr::null_mut(), ptr::null_mut());
-
-        // iterate over retired records and reclaim all which are no longer protected
-        while !curr.is_null() {
-            // all retired records point at the entire record (including the header), whereas all
-            // hazard pointers point at data, so the offset needs to be calculated before comparing
-            let data_addr = (curr as usize) + (*curr).retired.as_ref().unwrap().offset_data();
-
-            // `(*curr).next` must be read HERE because `curr` may be de-allocated in the next step
-            let next = Header::next(curr);
-            match scan_cache.binary_search_by(|protected| protected.address().cmp(&data_addr)) {
-                // the record is still protected by some hazard pointer
-                Ok(_) => {
-                    if !first.is_null() {
-                        // append curr to tail (last)
-                        Header::set_next(last, curr);
-                        last = curr;
-                    } else {
-                        // first entry, set first and last
-                        first = curr;
-                        last = curr;
-                    }
-                }
-                // the record can be reclaimed
-                Err(_) => (*curr).retired.take().unwrap().reclaim(),
-            }
-
-            curr = next;
-        }
-
-        // if not all records were reclaimed, push all others back into the global queue in bulk.
-        if !first.is_null() {
-            self.raw.push_many((first, last));
-        }
-    }
 }
 
 /********** impl Drop *****************************************************************************/
@@ -154,9 +122,71 @@ impl Drop for RetiredQueue {
         let mut curr = self.raw.take_all_unsync();
         while !curr.is_null() {
             unsafe {
+                let next = Header::next(curr);
                 (*curr).retired.take().unwrap().reclaim();
-                curr = Header::next(curr);
+                curr = next;
             }
         }
     }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Taken
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub(crate) struct Taken {
+    curr: *mut Header,
+}
+
+impl Taken {
+    pub unsafe fn reclaim_all_unprotected(
+        mut self,
+        scan_cache: &[ProtectedPtr],
+    ) -> Result<(), Unreclaimed> {
+        // these pointers will form the queue of unreclaimed records that need to be pushed back
+        // into the global queue
+        let (mut first, mut last): (*mut Header, *mut Header) = (ptr::null_mut(), ptr::null_mut());
+
+        // iterate over retired records and reclaim all which are no longer protected
+        while !self.curr.is_null() {
+            // `(*curr).next` must be read HERE because `curr` may be de-allocated in the next step
+            let next = Header::next(self.curr);
+            // all retired records point at the entire record (including the header), whereas all
+            // hazard pointers point at data, so the offset needs to be calculated before comparing
+            let data_ptr = (*self.curr).retired.as_ref().unwrap().data_ptr();
+            match scan_cache.binary_search_by(|protected| protected.compare_with(data_ptr)) {
+                // the record is still protected by some hazard pointer
+                Ok(_) => {
+                    if !first.is_null() {
+                        // insert `curr` after `last`
+                        Header::set_next(last, self.curr);
+                        last = self.curr;
+                    } else {
+                        // first entry, set first and last
+                        first = self.curr;
+                        last = self.curr;
+                    }
+                }
+                // the record can be reclaimed
+                Err(_) => (*self.curr).retired.take().unwrap().reclaim(),
+            }
+
+            self.curr = next;
+        }
+
+        // if not all were reclaimed, the unreclaimed ones must be pushed back to the global queue.
+        match first {
+            ptr if ptr.is_null() => Ok(()),
+            _ => Err(Unreclaimed { first, last }),
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Unreclaimed
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub(crate) struct Unreclaimed {
+    first: *mut Header,
+    last: *mut Header,
 }

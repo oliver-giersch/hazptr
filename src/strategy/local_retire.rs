@@ -1,4 +1,3 @@
-use core::cmp;
 use core::mem;
 use core::ptr;
 
@@ -65,7 +64,9 @@ impl RetireNode {
     pub unsafe fn reclaim_all_unprotected(&mut self, scan_cache: &[ProtectedPtr]) {
         self.vec.retain(|retired| {
             // retain (i.e. DON'T drop) all records found within the scan cache of protected hazards
-            scan_cache.binary_search_by(|&protected| retired.compare_with(protected)).is_ok()
+            scan_cache
+                .binary_search_by(|protected| protected.compare_with(retired.as_ptr()))
+                .is_ok()
         });
     }
 }
@@ -189,8 +190,8 @@ impl ReclaimOnDrop {
 
     /// Compares the address of the retired record with the `protected` address.
     #[inline]
-    fn compare_with(&self, protected: ProtectedPtr) -> cmp::Ordering {
-        protected.address().cmp(&self.retired.address())
+    fn as_ptr(&self) -> *const () {
+        self.retired.as_ptr()
     }
 }
 

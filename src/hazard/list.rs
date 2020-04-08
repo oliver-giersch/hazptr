@@ -107,10 +107,10 @@ impl HazardList {
         // repeat trying to insert the allocated node at the (current) tail
         // (lst:5) this acq-rel/acq CAS syncs-with the acq loads (lst:2-4) and itself
         // todo: should be rel/acq ordering
-        while let Err(node) = (*tail).compare_exchange(ptr::null_mut(), node, AcqRel, Acquire) {
+        while let Err(read) = (*tail).compare_exchange(ptr::null_mut(), node, AcqRel, Acquire) {
             // the CAS failed, so another thread must have already inserted a different node at the
             // tail, try to acquire a hazard pointer from that node first
-            if let Some(hazard) = self.try_insert_in_node(node, protected, order) {
+            if let Some(hazard) = self.try_insert_in_node(read, protected, order) {
                 // a hazard pointer was successfully acquired from the inserted node, so the one
                 // allocated by the current thread can be de-allocated again and the hazard pointer
                 // returned
@@ -120,7 +120,7 @@ impl HazardList {
 
             // no hazard pointer could be acquired, so update the local tail pointer variable and
             // try inserting the allocated node again at the new tail
-            tail = &(*node).next;
+            tail = &(*read).next;
         }
 
         // the node was successfully inserted at the tail, so the pre-reserved hazard pointer can

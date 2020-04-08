@@ -1,5 +1,6 @@
 mod list;
 
+use core::cmp;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
@@ -123,10 +124,14 @@ impl ProtectedPtr {
         self.0
     }
 
-    /// Gets the memory address of the [`ProtectedPtr`].
     #[inline]
-    pub fn address(self) -> usize {
-        self.0.as_ptr() as usize
+    pub fn compare_with(self, ptr: *const ()) -> cmp::Ordering {
+        self.as_ptr().cmp(&ptr)
+    }
+
+    #[inline]
+    fn as_ptr(self) -> *const () {
+        self.0.as_ptr() as _
     }
 }
 
