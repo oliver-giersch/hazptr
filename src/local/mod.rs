@@ -31,7 +31,6 @@ use self::inner::{LocalInner, RecycleError};
 /// This type abstracts over the ownership of the local state, which may either
 /// be owned through a shared pointer or borrowed through a reference or raw
 /// pointer (unsafely).
-#[derive(Debug)]
 pub struct LocalRef<'local, 'global, R> {
     inner: Ref<'local, 'global, R>,
     _marker: PhantomData<R>,
@@ -118,7 +117,7 @@ unsafe impl<'local, 'global, R: Reclaim> LocalState for LocalRef<'local, 'global
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// The local state of a thread using hazard pointers.
-#[derive(Debug)]
+
 pub struct Local<'global, R> {
     inner: UnsafeCell<LocalInner<'global>>,
     _marker: PhantomData<R>,
@@ -162,7 +161,7 @@ impl<'global, R> Local<'global, R> {
 
 /// An abstraction for an owning, borrowing or raw reference to a `Local`
 /// instance.
-#[derive(Debug)]
+
 enum Ref<'local, 'global, R> {
     Rc(Rc<Local<'global, R>>),
     Ref(&'local Local<'global, R>),

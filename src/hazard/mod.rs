@@ -19,7 +19,6 @@ const THREAD_RESERVED: *mut () = 2 as _;
 /// A pointer that must visible to all threads that indicates that the currently
 /// pointed-to value is in use by some thread and therefore protected from
 /// reclamation, i.e. it must not be de-allocated.
-#[derive(Debug)]
 pub(crate) struct HazardPtr {
     protected: AtomicPtr<()>,
 }
@@ -45,16 +44,19 @@ impl HazardPtr {
     #[inline]
     pub fn protected(&self, order: Ordering) -> ProtectedResult {
         match self.protected.load(order) {
-            NOT_YET_USED => ProtectedResult::Abort,
+            NOT_YET_USED => ProtectedResult::AbortIteration,
             FREE | THREAD_RESERVED => ProtectedResult::Unprotected,
-            ptr => ProtectedResult::Protected(ProtectedPtr(NonNull::new(ptr).unwrap())),
+            ptr => unsafe {
+                // safety: null is covered by `NOT_YET_USED`
+                ProtectedResult::Protected(ProtectedPtr(NonNull::new_unchecked(ptr)))
+            },
         }
     }
 
     #[inline]
     pub fn set_protected(&self, protected: NonNull<()>, order: Ordering) {
-        assert_eq!(order, Ordering::SeqCst, "this method requires sequential consistency");
-        self.protected.store(protected.as_ptr(), order);
+        debug_assert_eq!(order, Ordering::SeqCst, "this method requires sequential consistency");
+        self.protected.store(protected.as_ptr(), Ordering::SeqCst);
     }
 
     /// Creates a new [`HazardPointer`].
@@ -86,7 +88,7 @@ pub(crate) enum ProtectedResult {
     /// Since hazard pointers are acquired in order this means that any
     /// iteration of all hazard pointers can abort early, since no subsequent
     /// hazards pointers could be in use either.
-    Abort,
+    AbortIteration,
 }
 
 /********** impl inherent *************************************************************************/
@@ -147,7 +149,7 @@ mod tests {
     #[test]
     fn hazard_ptr() {
         let hazard = HazardPtr::new();
-        assert_eq!(hazard.protected(Ordering::Relaxed), ProtectedResult::Abort);
+        assert_eq!(hazard.protected(Ordering::Relaxed), ProtectedResult::AbortIteration);
         hazard.set_protected(NonNull::from(&mut 1).cast(), Ordering::Relaxed);
         assert!(hazard.protected(Ordering::Relaxed).protected().is_some());
         hazard.set_thread_reserved(Ordering::Relaxed);

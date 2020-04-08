@@ -14,7 +14,10 @@ exclude = [".travis.yml", "ci/*", "DEBUG.md"]
 [features]
 default = ["std"]
 
+# enables the "examples" feature of conquer-reclaim
 examples = ["conquer-reclaim/examples"]
+# enables the "examples-debug" feature of conquer-reclaim
+examples-debug = ["conquer-reclaim/examples-debug"]
 global = ["std"]
 std = ["arrayvec/std", "conquer-once/std", "conquer-reclaim/std"]
 

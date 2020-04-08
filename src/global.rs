@@ -7,7 +7,6 @@ use crate::strategy::GlobalRetireState;
 // GlobalRef
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
 pub(crate) struct GlobalRef<'global> {
     inner: Ref<'global>,
 }
@@ -49,7 +48,6 @@ impl GlobalRef<'_> {
 // Global
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
 pub(crate) struct Global {
     /// The required global state for the chosen retire strategy.
     pub(crate) retire_state: GlobalRetireState,
@@ -77,7 +75,7 @@ impl Global {
 
     #[inline]
     pub fn collect_protected_hazards(&self, scan_cache: &mut Vec<ProtectedPtr>, order: Ordering) {
-        assert_eq!(order, Ordering::SeqCst, "this method must have `SeqCst` ordering");
+        debug_assert_eq!(order, Ordering::SeqCst, "this method must have `SeqCst` ordering");
         // clear any entries from previous reclamation attempts
         scan_cache.clear();
 
@@ -88,7 +86,7 @@ impl Global {
         for hazard in self.hazards.iter() {
             match hazard.protected(Ordering::Relaxed) {
                 ProtectedResult::Protected(protected) => scan_cache.push(protected),
-                ProtectedResult::Abort => return,
+                ProtectedResult::AbortIteration => return,
                 _ => {}
             }
         }
@@ -101,7 +99,6 @@ impl Global {
 
 /// A reference to a [`Global`] that is either safe but lifetime-bound or unsafe
 /// and lifetime-independent (a raw pointer).
-#[derive(Debug)]
 enum Ref<'global> {
     Ref(&'global Global),
     Raw(*const Global),

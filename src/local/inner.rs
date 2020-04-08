@@ -33,7 +33,7 @@ impl From<CapacityError<&'_ HazardPtr>> for RecycleError {
 const HAZARD_CACHE: usize = 16;
 
 /// The thread-local state for using and managing hazard pointers.
-#[derive(Debug)]
+
 pub(super) struct LocalInner<'global> {
     /// The configuration used by the thread.
     config: Config,
@@ -54,7 +54,7 @@ pub(super) struct LocalInner<'global> {
 /********** impl inherent *************************************************************************/
 
 impl<'global> LocalInner<'global> {
-    /// Creates a new [`LocalInner`] from a `config` and a `global`.
+    /// Creates a new `LocalInner` from a `config` and a `global`.
     #[inline]
     pub fn new(config: Config, global: GlobalRef<'global>) -> Self {
         let state = ManuallyDrop::new(LocalRetireState::from(&global.as_ref().retire_state));
@@ -172,6 +172,8 @@ impl<'global> LocalInner<'global> {
 
     #[inline]
     unsafe fn reclaim_all_unprotected(&mut self) {
+        // scan cache must be sorted for binary search
+        self.scan_cache.sort_unstable();
         match &mut *self.state {
             LocalRetireState::GlobalStrategy(ref queue) => {
                 queue.reclaim_all_unprotected(&self.scan_cache)
@@ -182,10 +184,9 @@ impl<'global> LocalInner<'global> {
                     local.merge(node.into_inner())
                 }
 
-                self.scan_cache.sort_unstable();
                 local.reclaim_all_unprotected(&self.scan_cache)
             }
-        }
+        };
     }
 }
 

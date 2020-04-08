@@ -62,7 +62,8 @@ impl RawNode for Header {
 ///
 /// Every record must be allocated with a [`Header`] that allows it to be
 /// inserted into the queue and to be later reclaimed.
-#[derive(Debug, Default)]
+/// This data-structure forms a singly linked list of record headers of retired
+/// records.
 pub(crate) struct RetiredQueue {
     raw: RawQueue<Header>,
 }
@@ -93,38 +94,39 @@ impl RetiredQueue {
     #[inline]
     pub unsafe fn retire_record(&self, retired: RetiredPtr) {
         // `retired` points to a record, which has layout guarantees regarding field ordering
-        // and the record's header is always first
+        // and the record's header is always located at the beginning
         let header = retired.as_ptr() as *mut Header;
-        // store the retired record in the header itself, because it is necessary for later
-        // reclamation
         (*header).retired = Some(retired);
+
         self.raw.push(header);
     }
 
     #[inline]
-    pub unsafe fn reclaim_all_unprotected(&self, protected: &[ProtectedPtr]) {
+    pub unsafe fn reclaim_all_unprotected(&self, scan_cache: &[ProtectedPtr]) {
         // take all retired records from the global queue
         let mut curr = self.raw.take_all();
-        // these variables are used to create a simple inline linked list structure
-        // all records which can not be reclaimed are put back into this list and are
-        // eventually pushed back into the global queue.
+        // these pointers are used to form a simple inline singly linked list structure of all
+        // records which can NOT yet be reclaimed and have to be pushed back into the global queue.
         let (mut first, mut last): (*mut Header, *mut Header) = (ptr::null_mut(), ptr::null_mut());
 
-        // iterate all retired records and reclaim all which are no longer protected
+        // iterate over retired records and reclaim all which are no longer protected
         while !curr.is_null() {
-            let addr = curr as usize;
+            // all retired records point at the entire record (including the header), whereas all
+            // hazard pointers point at data, so the offset needs to be calculated before comparing
+            let data_addr = (curr as usize) + (*curr).retired.as_ref().unwrap().offset_data();
+
+            // `(*curr).next` must be read HERE because `curr` may be de-allocated in the next step
             let next = Header::next(curr);
-            match protected.binary_search_by(|protected| protected.address().cmp(&addr)) {
+            match scan_cache.binary_search_by(|protected| protected.address().cmp(&data_addr)) {
                 // the record is still protected by some hazard pointer
                 Ok(_) => {
-                    // the next pointer must be zeroed since it may still point at some record
-                    // from the global queue
-                    Header::set_next(curr, ptr::null_mut());
-                    if first.is_null() {
-                        first = curr;
+                    if !first.is_null() {
+                        // append curr to tail (last)
+                        Header::set_next(last, curr);
                         last = curr;
                     } else {
-                        Header::set_next(last, curr);
+                        // first entry, set first and last
+                        first = curr;
                         last = curr;
                     }
                 }
@@ -135,7 +137,7 @@ impl RetiredQueue {
             curr = next;
         }
 
-        // not all records were reclaimed, push all others back into the global queue in bulk.
+        // if not all records were reclaimed, push all others back into the global queue in bulk.
         if !first.is_null() {
             self.raw.push_many((first, last));
         }

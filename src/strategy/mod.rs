@@ -50,7 +50,6 @@ impl RetireStrategy for GlobalRetire {}
 // GlobalRetireState
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
 pub(crate) enum GlobalRetireState {
     /// The [`GlobalStrategy`] requires a global queue for **all** retired
     /// records.
@@ -91,7 +90,6 @@ impl RetireStrategy for LocalRetire {}
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// The thread-local state required by the selected retire strategy.
-#[derive(Debug)]
 pub(crate) enum LocalRetireState<'global> {
     /// The local state used by the global retire strategy.
     GlobalStrategy(&'global RetiredQueue),

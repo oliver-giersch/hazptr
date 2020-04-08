@@ -7,18 +7,19 @@ use conquer_reclaim::examples::treiber::ArcStack;
 use conquer_reclaim::Reclaim;
 use hazptr::{GlobalHp, GlobalRetire, Hp};
 
-const PER_THREAD_ALLOCATIONS: usize = 10_000_000 + 1_000;
-const THREADS: usize = 8;
+const PRE_FILL_OPS: usize = 1_000;
+const PUSH_OPS: usize = 1_000_000;
+const THREADS: usize = 4;
 
 static COUNTERS: [ThreadCount; THREADS] = [
     ThreadCount(AtomicUsize::new(0)),
     ThreadCount(AtomicUsize::new(0)),
     ThreadCount(AtomicUsize::new(0)),
     ThreadCount(AtomicUsize::new(0)),
-    ThreadCount(AtomicUsize::new(0)),
-    ThreadCount(AtomicUsize::new(0)),
-    ThreadCount(AtomicUsize::new(0)),
-    ThreadCount(AtomicUsize::new(0)),
+    // ThreadCount(AtomicUsize::new(0)),
+    // ThreadCount(AtomicUsize::new(0)),
+    // ThreadCount(AtomicUsize::new(0)),
+    // ThreadCount(AtomicUsize::new(0)),
 ];
 
 fn main() {
@@ -58,11 +59,11 @@ fn run_example<R: Reclaim>(stack: ArcStack<DropCount<'static>, R>) {
             let stack = ArcStack::clone(&stack);
             thread::spawn(move || {
                 let ThreadCount(counter) = &COUNTERS[id];
-                for _ in 0..1_000 {
+                for _ in 0..PRE_FILL_OPS {
                     stack.push(DropCount(counter));
                 }
 
-                for _ in 0..10_000_000 {
+                for _ in 0..PUSH_OPS {
                     let _ = stack.pop();
                     stack.push(DropCount(counter));
                 }
@@ -79,7 +80,7 @@ fn run_example<R: Reclaim>(stack: ArcStack<DropCount<'static>, R>) {
     mem::drop(stack);
     let drop_sum = COUNTERS.iter().map(|ThreadCount(count)| count.load(Ordering::Relaxed)).sum();
 
-    assert_eq!(THREADS * PER_THREAD_ALLOCATIONS, drop_sum);
+    assert_eq!(THREADS * (PRE_FILL_OPS + PUSH_OPS), drop_sum);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

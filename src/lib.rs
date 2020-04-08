@@ -14,6 +14,8 @@ mod local;
 mod queue;
 mod strategy;
 
+use core::marker::PhantomData;
+
 pub use conquer_reclaim;
 pub use conquer_reclaim::typenum;
 
@@ -33,14 +35,13 @@ use crate::strategy::{GlobalRetireState, RetireStrategy};
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// The global state for the hazard pointer memory reclamation scheme.
-#[derive(Debug)]
 pub struct Hp<S = LocalRetire> {
     /// The reclaimer configuration.
     config: Config,
     /// The global state.
     state: Global,
     /// The retire strategy.
-    retire_strategy: S,
+    _marker: PhantomData<S>,
 }
 
 /********** impl inherent *************************************************************************/
@@ -52,7 +53,7 @@ impl Hp<GlobalRetire> {
         Self {
             config,
             state: Global::new(GlobalRetireState::global_strategy()),
-            retire_strategy: GlobalRetire,
+            _marker: PhantomData,
         }
     }
 }
@@ -64,7 +65,7 @@ impl Hp<LocalRetire> {
         Self {
             config,
             state: Global::new(GlobalRetireState::local_strategy()),
-            retire_strategy: LocalRetire,
+            _marker: PhantomData,
         }
     }
 }

@@ -62,10 +62,10 @@ impl RetireNode {
     }
 
     #[inline]
-    pub unsafe fn reclaim_all_unprotected(&mut self, protected: &[ProtectedPtr]) {
+    pub unsafe fn reclaim_all_unprotected(&mut self, scan_cache: &[ProtectedPtr]) {
         self.vec.retain(|retired| {
             // retain (i.e. DON'T drop) all records found within the scan cache of protected hazards
-            protected.binary_search_by(|&protected| retired.compare_with(protected)).is_ok()
+            scan_cache.binary_search_by(|&protected| retired.compare_with(protected)).is_ok()
         });
     }
 }
