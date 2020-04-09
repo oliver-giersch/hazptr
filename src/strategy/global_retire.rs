@@ -83,11 +83,13 @@ impl RetiredQueue {
         self.raw.is_empty()
     }
 
+    /// Takes (removes) and returns all entries from the queue atomically.
     #[inline]
     pub fn take_all(&self) -> Taken {
         Taken { curr: self.raw.take_all() }
     }
 
+    /// Pushes back all records that could not be reclaimed in bulk.
     #[inline]
     pub fn push_back_unreclaimed(&self, unreclaimed: Unreclaimed) {
         unsafe { self.raw.push_many((unreclaimed.first, unreclaimed.last)) };
@@ -138,6 +140,8 @@ pub(crate) struct Taken {
     curr: *mut Header,
 }
 
+/********** impl inherent *************************************************************************/
+
 impl Taken {
     pub unsafe fn reclaim_all_unprotected(
         mut self,
@@ -186,6 +190,7 @@ impl Taken {
 // Unreclaimed
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A (sub-)list of all unreclaimed records.
 pub(crate) struct Unreclaimed {
     first: *mut Header,
     last: *mut Header,
