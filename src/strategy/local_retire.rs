@@ -200,7 +200,7 @@ impl ReclaimOnDrop {
 impl Drop for ReclaimOnDrop {
     #[inline(always)]
     fn drop(&mut self) {
-        // safety: This is only safe if the invariants of construction are maintained.
+        // safety: This is only safe if the invariants of `new` are maintained.
         unsafe { self.retired.reclaim() };
     }
 }

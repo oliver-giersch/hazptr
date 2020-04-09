@@ -95,6 +95,8 @@ impl HazardList {
         self.insert_back(prev, protect, order)
     }
 
+    /// Attempts to insert a new node behind `tail` and returns a reserved
+    /// hazard pointer for `protected`.
     #[inline]
     unsafe fn insert_back(
         &self,
@@ -128,6 +130,8 @@ impl HazardList {
         &(*node).hazards[0]
     }
 
+    /// Attempts to reserve a hazard pointer in `node` for `protected` and
+    /// return a reference to it.
     #[inline]
     unsafe fn try_insert_in_node(
         &self,

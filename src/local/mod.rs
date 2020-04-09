@@ -161,7 +161,6 @@ impl<'global, R> Local<'global, R> {
 
 /// An abstraction for an owning, borrowing or raw reference to a `Local`
 /// instance.
-
 enum Ref<'local, 'global, R> {
     Rc(Rc<Local<'global, R>>),
     Ref(&'local Local<'global, R>),

@@ -19,7 +19,7 @@ pub(crate) struct RecycleError;
 
 /********** impl From *****************************************************************************/
 
-impl From<CapacityError<&'_ HazardPtr>> for RecycleError {
+impl From<CapacityError<&HazardPtr>> for RecycleError {
     #[inline]
     fn from(_: CapacityError<&HazardPtr>) -> Self {
         RecycleError
@@ -121,7 +121,7 @@ impl<'global> LocalInner<'global> {
     #[inline]
     pub unsafe fn retire_record(&mut self, retired: RetiredPtr) {
         // retire the record according to the specified retire strategy
-        self.retire_inner(retired);
+        self.retire_record_inner(retired);
 
         // if the chosen config specifies retire operations to be counted, increase the ops count
         if let CountStrategy::Retire = self.config.count_strategy {
@@ -137,12 +137,14 @@ impl<'global> LocalInner<'global> {
 
         if self.ops_count == self.config.ops_count_threshold {
             self.ops_count = 0;
-            self.try_reclaim();
+            self.reclaim_all_unprotected();
         }
     }
 
+    /// Reclaims all records that are not protected by any hazard pointers.
     #[cold]
-    fn try_reclaim(&mut self) {
+    fn reclaim_all_unprotected(&mut self) {
+        // the reclamation procedure differs for the two possible retire strategies
         match &mut *self.state {
             LocalRetireState::GlobalStrategy(ref global_queue) => {
                 // return early if the global queue is empty
@@ -181,8 +183,9 @@ impl<'global> LocalInner<'global> {
         };
     }
 
+    /// Retires the record in the appropriate queue.
     #[inline]
-    unsafe fn retire_inner(&mut self, retired: RetiredPtr) {
+    unsafe fn retire_record_inner(&mut self, retired: RetiredPtr) {
         match &mut *self.state {
             LocalRetireState::GlobalStrategy(ref queue) => queue.retire_record(retired),
             LocalRetireState::LocalStrategy(node, _) => node.retire_record(retired),
@@ -201,7 +204,7 @@ impl Drop for LocalInner<'_> {
         }
 
         // execute a final reclamation attempt
-        self.try_reclaim();
+        self.reclaim_all_unprotected();
 
         let state = unsafe { ManuallyDrop::take(&mut self.state) };
         // if a local retire strategy is used, any remaining retired records must be made

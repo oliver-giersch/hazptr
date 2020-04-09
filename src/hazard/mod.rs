@@ -42,6 +42,7 @@ impl HazardPtr {
         self.protected.store(THREAD_RESERVED, order);
     }
 
+    /// Returns the current state of the `HazardPtr`.
     #[inline]
     pub fn protected(&self, order: Ordering) -> ProtectedResult {
         match self.protected.load(order) {
@@ -54,6 +55,7 @@ impl HazardPtr {
         }
     }
 
+    /// Sets the `HazardPtr`'s protected value to `protected`.
     #[inline]
     pub fn set_protected(&self, protected: NonNull<()>, order: Ordering) {
         debug_assert_eq!(order, Ordering::SeqCst, "this method requires sequential consistency");
@@ -124,6 +126,7 @@ impl ProtectedPtr {
         self.0
     }
 
+    /// Compares the protected pointer with `ptr`.
     #[inline]
     pub fn compare_with(self, ptr: *const ()) -> cmp::Ordering {
         self.as_ptr().cmp(&ptr)
