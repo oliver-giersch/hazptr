@@ -1,5 +1,8 @@
 use core::sync::atomic::{self, Ordering};
 
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
 use crate::hazard::{HazardList, HazardPtr, ProtectStrategy, ProtectedPtr, ProtectedResult};
 use crate::strategy::GlobalRetireState;
 

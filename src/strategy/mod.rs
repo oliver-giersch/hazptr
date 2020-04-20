@@ -1,6 +1,9 @@
 pub(crate) mod global_retire;
 pub(crate) mod local_retire;
 
+#[cfg(not(feature = "std"))]
+use alloc::boxed::Box;
+
 use self::global_retire::RetiredQueue;
 use self::local_retire::{AbandonedQueue, RetireNode};
 

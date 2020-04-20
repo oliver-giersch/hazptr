@@ -9,7 +9,6 @@ cfg_if::cfg_if! {
         use std::rc::Rc;
     } else {
         use alloc::rc::Rc;
-        use alloc::vec::Vec;
     }
 }
 

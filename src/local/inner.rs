@@ -1,6 +1,9 @@
 use core::mem::ManuallyDrop;
 use core::sync::atomic::Ordering;
 
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
 use arrayvec::{ArrayVec, CapacityError};
 use conquer_reclaim::RetiredPtr;
 
